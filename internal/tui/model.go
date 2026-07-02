@@ -53,6 +53,7 @@ type (
 		items      []*gitlab.MRInfo
 		totalPages int
 	}
+	mrDetailLoadedMsg struct{ item *gitlab.MRInfo }
 	pipelineLoadedMsg struct {
 		items      []*gitlab.PipelineInfo
 		totalPages int
@@ -221,6 +222,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case mrDetailLoadedMsg:
+		m.mrDetail = msg.item
+		return m, nil
+
 	case pipelineLoadedMsg:
 		m.pipelines = msg.items
 		m.pipelineTotalPage = msg.totalPages
@@ -242,6 +247,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case actionDoneMsg:
 		m.doneMsg = msg.msg
 		m.state = m.prevState
+		// When returning to MR detail, reload the single MR so vote counts are fresh.
+		if m.state == stateDetail && m.tab == tabMRs && m.mrDetail != nil {
+			return m, m.cmdLoadMRDetail(m.mrDetail.IID)
+		}
 		return m, m.reloadCurrent()
 
 	case tea.KeyMsg:
@@ -437,6 +446,12 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 				return m.promptConfirm("Close MR", fmt.Sprintf("Close MR !%d?", m.mrDetail.IID),
 					m.cmdCloseMR(m.mrDetail.IID))
 			}
+		case "+":
+			return m.promptConfirm("Toggle Vote Up", fmt.Sprintf("👍 Toggle vote up on MR !%d?", m.mrDetail.IID),
+				m.cmdVoteUpMR(m.mrDetail.IID))
+		case "-":
+			return m.promptConfirm("Toggle Vote Down", fmt.Sprintf("👎 Toggle vote down on MR !%d?", m.mrDetail.IID),
+				m.cmdVoteDownMR(m.mrDetail.IID))
 		}
 	case tabPipelines:
 		if m.pipelineDetail == nil {
@@ -585,9 +600,10 @@ func (m Model) openDetail() (Model, tea.Cmd) {
 	switch m.tab {
 	case tabMRs:
 		if m.mrCursor < len(m.mrs) {
-			m.mrDetail = m.mrs[m.mrCursor]
+			m.mrDetail = m.mrs[m.mrCursor] // placeholder until fresh fetch arrives
 			m.prevState = stateMain
 			m.state = stateDetail
+			return m, m.cmdLoadMRDetail(m.mrDetail.IID)
 		}
 	case tabPipelines:
 		if m.pipelineCursor < len(m.pipelines) {
@@ -811,6 +827,47 @@ func (m Model) cmdCancelPipeline(id int) tea.Cmd {
 			return errMsg{err}
 		}
 		return actionDoneMsg{"Pipeline cancelled!"}
+	}
+}
+
+func (m Model) cmdLoadMRDetail(iid int) tea.Cmd {
+	pid := m.project.ID
+	return func() tea.Msg {
+		mr, err := m.client.GetMR(pid, iid)
+		if err != nil {
+			return errMsg{err}
+		}
+		return mrDetailLoadedMsg{mr}
+	}
+}
+
+func (m Model) cmdVoteUpMR(iid int) tea.Cmd {
+	pid := m.project.ID
+	username := m.username
+	return func() tea.Msg {
+		added, err := m.client.ToggleVoteMR(pid, iid, "thumbsup", username)
+		if err != nil {
+			return errMsg{err}
+		}
+		if added {
+			return actionDoneMsg{"👍 Vote up added!"}
+		}
+		return actionDoneMsg{"👍 Vote up removed."}
+	}
+}
+
+func (m Model) cmdVoteDownMR(iid int) tea.Cmd {
+	pid := m.project.ID
+	username := m.username
+	return func() tea.Msg {
+		added, err := m.client.ToggleVoteMR(pid, iid, "thumbsdown", username)
+		if err != nil {
+			return errMsg{err}
+		}
+		if added {
+			return actionDoneMsg{"👎 Vote down added!"}
+		}
+		return actionDoneMsg{"👎 Vote down removed."}
 	}
 }
 
@@ -1406,6 +1463,8 @@ func (m Model) viewDetailFooter() string {
 			keyHint("a", "approve"),
 			keyHint("m", "merge"),
 			keyHint("c", "close"),
+			keyHint("+", "vote up"),
+			keyHint("-", "vote down"),
 			keyHint("Esc", "back"),
 			keyHint("q", "quit"),
 		}

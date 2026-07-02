@@ -188,7 +188,48 @@ func (c *Client) ListMRs(projectID int, state MRState, page int) ([]*MRInfo, int
 	return result, i64(resp.TotalPages), nil
 }
 
-// ApproveMR approves a merge request.
+// GetMR fetches a single merge request by IID with up-to-date field values
+// (vote counts on the list endpoint can be stale).
+func (c *Client) GetMR(projectID, mriid int) (*MRInfo, error) {
+	mr, _, err := c.raw.MergeRequests.GetMergeRequest(projectID, int64(mriid), nil)
+	if err != nil {
+		return nil, fmt.Errorf("getting MR !%d: %w", mriid, err)
+	}
+	info := &MRInfo{
+		IID:            i64(mr.IID),
+		Title:          mr.Title,
+		State:          mr.State,
+		TargetBranch:   mr.TargetBranch,
+		SourceBranch:   mr.SourceBranch,
+		WebURL:         mr.WebURL,
+		Upvotes:        i64(mr.Upvotes),
+		Downvotes:      i64(mr.Downvotes),
+		UserNotesCount: i64(mr.UserNotesCount),
+		Description:    mr.Description,
+		Draft:          mr.Draft,
+	}
+	if mr.Author != nil {
+		info.Author = mr.Author.Username
+	}
+	if mr.CreatedAt != nil {
+		info.CreatedAt = mr.CreatedAt.Format("2006-01-02 15:04")
+	}
+	if mr.UpdatedAt != nil {
+		info.UpdatedAt = mr.UpdatedAt.Format("2006-01-02 15:04")
+	}
+	for _, l := range mr.Labels {
+		info.Labels = append(info.Labels, l)
+	}
+	for _, a := range mr.Assignees {
+		info.Assignees = append(info.Assignees, a.Username)
+	}
+	for _, r := range mr.Reviewers {
+		info.Reviewers = append(info.Reviewers, r.Username)
+	}
+	return info, nil
+}
+
+
 func (c *Client) ApproveMR(projectID, mriid int) error {
 	_, _, err := c.raw.MergeRequestApprovals.ApproveMergeRequest(projectID, int64(mriid), nil)
 	return err
@@ -207,6 +248,30 @@ func (c *Client) CloseMR(projectID, mriid int) error {
 		StateEvent: &state,
 	})
 	return err
+}
+
+// ToggleVoteMR adds or removes a thumbsup/thumbsdown award emoji on a merge request.
+// If the authenticated user (username) has already awarded the same emoji, it is
+// deleted (toggle off) and the function returns false. Otherwise the emoji is created
+// and the function returns true.
+// vote must be either "thumbsup" or "thumbsdown".
+func (c *Client) ToggleVoteMR(projectID, mriid int, vote, username string) (added bool, err error) {
+	emojis, _, err := c.raw.AwardEmoji.ListMergeRequestAwardEmoji(projectID, int64(mriid), nil)
+	if err != nil {
+		return false, fmt.Errorf("listing award emoji: %w", err)
+	}
+	for _, e := range emojis {
+		if e.Name == vote && e.User.Username == username {
+			// Already voted — remove it.
+			_, err = c.raw.AwardEmoji.DeleteMergeRequestAwardEmoji(projectID, int64(mriid), int64(e.ID))
+			return false, err
+		}
+	}
+	// Not yet voted — add it.
+	_, _, err = c.raw.AwardEmoji.CreateMergeRequestAwardEmoji(projectID, int64(mriid), &gl.CreateAwardEmojiOptions{
+		Name: vote,
+	})
+	return true, err
 }
 
 // ─── Pipelines ───────────────────────────────────────────────────────────────
