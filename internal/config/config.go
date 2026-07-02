@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -199,3 +200,82 @@ func (c *Config) DefaultServer() *Server {
 	}
 	return nil
 }
+
+// ParseGitLabMRURL parses a GitLab merge request URL and matches it against configured servers.
+// It returns the server index, project path, and MR IID.
+func ParseGitLabMRURL(cfg *Config, rawURL string) (int, string, int, error) {
+	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
+		rawURL = "https://" + rawURL
+	}
+
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return -1, "", 0, fmt.Errorf("parsing URL: %w", err)
+	}
+
+	// 1. Find the server match
+	serverIdx := -1
+	uHost := strings.ToLower(u.Host)
+	uHostname := strings.ToLower(u.Hostname())
+
+	for i, s := range cfg.Servers {
+		srvParsed, err := url.Parse(s.URL)
+		if err != nil {
+			continue
+		}
+		srvHost := strings.ToLower(strings.TrimRight(srvParsed.Host, "/"))
+		srvHostname := strings.ToLower(srvParsed.Hostname())
+
+		if uHost == srvHost || uHostname == srvHostname {
+			serverIdx = i
+			break
+		}
+	}
+
+	if serverIdx == -1 {
+		return -1, "", 0, fmt.Errorf("no configured server URL or host matches %q", u.Host)
+	}
+
+	// 2. Extract project path and MR IID
+	// Formats expected: /<project-path>/-/merge_requests/<iid> or /<project-path>/merge_requests/<iid>
+	mrIdx := strings.Index(u.Path, "/-/merge_requests/")
+	var delimiterLen int
+	if mrIdx >= 0 {
+		delimiterLen = len("/-/merge_requests/")
+	} else {
+		mrIdx = strings.Index(u.Path, "/merge_requests/")
+		if mrIdx >= 0 {
+			delimiterLen = len("/merge_requests/")
+		}
+	}
+
+	if mrIdx < 0 {
+		return -1, "", 0, fmt.Errorf("URL does not appear to be a GitLab merge request URL (missing '/merge_requests/')")
+	}
+
+	projectPath := strings.TrimPrefix(u.Path[:mrIdx], "/")
+	if projectPath == "" {
+		return -1, "", 0, fmt.Errorf("could not extract project path from URL")
+	}
+
+	mrPart := u.Path[mrIdx+delimiterLen:]
+	if qIdx := strings.IndexAny(mrPart, "?#"); qIdx >= 0 {
+		mrPart = mrPart[:qIdx]
+	}
+	mrPart = strings.Trim(mrPart, "/")
+	if slashIdx := strings.Index(mrPart, "/"); slashIdx >= 0 {
+		mrPart = mrPart[:slashIdx]
+	}
+
+	if mrPart == "" {
+		return -1, "", 0, fmt.Errorf("could not extract merge request IID from URL")
+	}
+
+	mrIID, err := strconv.Atoi(mrPart)
+	if err != nil {
+		return -1, "", 0, fmt.Errorf("invalid merge request IID %q: %w", mrPart, err)
+	}
+
+	return serverIdx, projectPath, mrIID, nil
+}
+

@@ -105,6 +105,7 @@ type Model struct {
 	client     *gitlab.Client
 	project    *gitlab.ProjectInfo
 	username   string
+	initialMRIID int
 
 	state     appState
 	tab       tabID
@@ -180,7 +181,7 @@ type Model struct {
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
 // New creates the root model.
-func New(cfg *config.Config, serverIdx int, client *gitlab.Client, project *gitlab.ProjectInfo, startupWarn string) Model {
+func New(cfg *config.Config, serverIdx int, client *gitlab.Client, project *gitlab.ProjectInfo, startupWarn string, initialMRIID int) Model {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(colorAccent)
@@ -194,12 +195,13 @@ func New(cfg *config.Config, serverIdx int, client *gitlab.Client, project *gitl
 	ci.CharLimit = 2000
 
 	m := Model{
-		cfg:         cfg,
-		serverIdx:   serverIdx,
-		client:      client,
-		project:     project,
-		startupWarn: startupWarn,
-		state:       stateLoading,
+		cfg:          cfg,
+		serverIdx:    serverIdx,
+		client:       client,
+		project:      project,
+		startupWarn:  startupWarn,
+		initialMRIID: initialMRIID,
+		state:        stateLoading,
 		loadMsg:     "Connecting to GitLab...",
 		tab:       tabMRs,
 		spin:      sp,
@@ -254,6 +256,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.projectSearch.Focus()
 			return m, m.cmdLoadProjects()
 		}
+		if m.initialMRIID > 0 {
+			m.state = stateLoading
+			m.loadMsg = fmt.Sprintf("Loading merge request !%d...", m.initialMRIID)
+			return m, m.cmdLoadMRDetail(m.initialMRIID)
+		}
 		m.state = stateLoading
 		m.loadMsg = "Loading merge requests..."
 		return m, m.cmdLoadMRs()
@@ -269,12 +276,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case mrDetailLoadedMsg:
 		m.mrDetail = msg.item
-		// Auto-load diffs and discussions when detail is freshly opened
+		var cmds []tea.Cmd
 		if m.mrDiffFiles == nil {
-			return m, tea.Batch(
+			cmds = append(cmds,
 				m.cmdLoadMRDiffs(m.mrDetail.IID),
 				m.cmdLoadMRDiscussions(m.mrDetail.IID),
 			)
+		}
+		if m.state == stateLoading {
+			m.state = stateDetail
+			m.prevState = stateMain
+			m.tab = tabMRs
+		}
+		if len(cmds) > 0 {
+			return m, tea.Batch(cmds...)
 		}
 		return m, nil
 
@@ -407,6 +422,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mrDetailScrollOffset = 0
 			m.pipelineDetail = nil
 			m.issueDetail = nil
+			if len(m.mrs) == 0 {
+				m.state = stateLoading
+				m.loadMsg = "Loading merge requests..."
+				return m, m.cmdLoadMRs()
+			}
 		case stateServerSelect:
 			m.state = stateMain
 		case stateConfirm:
