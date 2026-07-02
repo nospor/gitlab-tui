@@ -13,6 +13,14 @@ import (
 	"gitlab-tui/internal/gitlab"
 )
 
+// commentMode distinguishes what kind of comment we are composing.
+type commentMode int
+
+const (
+	commentModeGeneral commentMode = iota
+	commentModeInline
+)
+
 // ─── Tabs ─────────────────────────────────────────────────────────────────────
 
 type tabID int
@@ -43,6 +51,7 @@ const (
 	stateDetail
 	stateServerSelect
 	stateConfirm
+	stateComment
 )
 
 // ─── Messages ─────────────────────────────────────────────────────────────────
@@ -66,8 +75,12 @@ type (
 		items      []*gitlab.ProjectInfo
 		totalPages int
 	}
-	actionDoneMsg struct{ msg string }
-	whoAmIMsg     struct{ username string }
+	actionDoneMsg   struct{ msg string }
+	whoAmIMsg       struct{ username string }
+	mrDiffsLoadedMsg struct {
+		files   []*gitlab.DiffFile
+		version *gitlab.MRVersion
+	}
 )
 
 // ─── Confirmation action ──────────────────────────────────────────────────────
@@ -105,6 +118,20 @@ type Model struct {
 	mrCursor    int
 	mrState     gitlab.MRState
 	mrDetail    *gitlab.MRInfo
+
+	// MR diff panel (shown in detail view)
+	mrDiffFiles        []*gitlab.DiffFile
+	mrDiffVersion      *gitlab.MRVersion
+	mrDiffFileIdx      int    // which file is selected
+	mrDiffLineCursor   int    // which line is highlighted within the file
+	mrDiffScrollOffset int    // scroll offset for the diff viewport
+	mrDiffPanelOpen    bool   // whether the diff panel is shown
+
+	// Comment composer
+	commentInput    textinput.Model
+	commentMode     commentMode
+	commentInlineFile *gitlab.DiffFile  // target file for inline comment
+	commentInlineLine gitlab.DiffLine   // target line for inline comment
 
 	// Pipeline view
 	pipelines       []*gitlab.PipelineInfo
@@ -153,6 +180,10 @@ func New(cfg *config.Config, serverIdx int, client *gitlab.Client, project *gitl
 	ti.Placeholder = "Search projects..."
 	ti.CharLimit = 100
 
+	ci := textinput.New()
+	ci.Placeholder = "Type your comment..."
+	ci.CharLimit = 2000
+
 	m := Model{
 		cfg:         cfg,
 		serverIdx:   serverIdx,
@@ -169,6 +200,7 @@ func New(cfg *config.Config, serverIdx int, client *gitlab.Client, project *gitl
 		issuePage:    1,
 		projectPage:  1,
 		projectSearch: ti,
+		commentInput:  ci,
 	}
 	return m
 }
@@ -188,6 +220,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.updateDiffScroll()
 		return m, nil
 
 	case spinner.TickMsg:
@@ -224,6 +257,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case mrDetailLoadedMsg:
 		m.mrDetail = msg.item
+		// Auto-load diffs when detail is freshly opened
+		if m.mrDiffFiles == nil {
+			return m, m.cmdLoadMRDiffs(m.mrDetail.IID)
+		}
+		return m, nil
+
+	case mrDiffsLoadedMsg:
+		m.mrDiffFiles = msg.files
+		m.mrDiffVersion = msg.version
+		m.mrDiffFileIdx = 0
+		m.mrDiffLineCursor = 0
+		m.mrDiffScrollOffset = 0
+		m.updateDiffScroll()
 		return m, nil
 
 	case pipelineLoadedMsg:
@@ -254,6 +300,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.reloadCurrent()
 
 	case tea.KeyMsg:
+		// Comment input captures all keys
+		if m.state == stateComment {
+			return m.handleCommentKey(msg)
+		}
 		if m.state == stateMain && m.tab == tabProjects && m.projectSearch.Focused() {
 			key := msg.String()
 			switch key {
@@ -321,8 +371,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key == "esc" {
 		switch m.state {
 		case stateDetail:
+			if m.mrDiffPanelOpen {
+				// Close diff panel first
+				m.mrDiffPanelOpen = false
+				return m, nil
+			}
 			m.state = stateMain
 			m.mrDetail = nil
+			m.mrDiffFiles = nil
+			m.mrDiffVersion = nil
+			m.mrDiffPanelOpen = false
 			m.pipelineDetail = nil
 			m.issueDetail = nil
 		case stateServerSelect:
@@ -432,7 +490,85 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 		if m.mrDetail == nil {
 			return m, nil
 		}
+		// Diff-panel navigation (active when panel is open)
+		if m.mrDiffPanelOpen {
+			switch key {
+			case "tab":
+				// Toggle panel off
+				m.mrDiffPanelOpen = false
+				return m, nil
+			case "j", "down":
+				m.diffLineCursorDown()
+				m.updateDiffScroll()
+				return m, nil
+			case "k", "up":
+				m.diffLineCursorUp()
+				m.updateDiffScroll()
+				return m, nil
+			case "J":
+				// Jump to next diff block
+				m.diffNextHunk()
+				m.updateDiffScroll()
+				return m, nil
+			case "K":
+				// Jump to previous diff block
+				m.diffPrevHunk()
+				m.updateDiffScroll()
+				return m, nil
+			case "n":
+				// Next file
+				if m.mrDiffFileIdx < len(m.mrDiffFiles)-1 {
+					m.mrDiffFileIdx++
+					m.mrDiffLineCursor = 0
+					m.mrDiffScrollOffset = 0
+					m.updateDiffScroll()
+				}
+				return m, nil
+			case "p":
+				// Prev file
+				if m.mrDiffFileIdx > 0 {
+					m.mrDiffFileIdx--
+					m.mrDiffLineCursor = 0
+					m.mrDiffScrollOffset = 0
+					m.updateDiffScroll()
+				}
+				return m, nil
+			case "N":
+				// Inline comment on current line
+				if len(m.mrDiffFiles) == 0 {
+					return m, nil
+				}
+				f := m.mrDiffFiles[m.mrDiffFileIdx]
+				if m.mrDiffLineCursor >= len(f.Lines) {
+					return m, nil
+				}
+				l := f.Lines[m.mrDiffLineCursor]
+				if l.Type == "hunk" {
+					return m, nil // can't comment on hunk headers
+				}
+				m.commentInlineFile = f
+				m.commentInlineLine = l
+				m.commentMode = commentModeInline
+				m.commentInput.SetValue("")
+				m.commentInput.Focus()
+				m.prevState = m.state
+				m.state = stateComment
+				return m, nil
+			}
+		}
 		switch key {
+		case "tab":
+			// Toggle diff panel
+			m.mrDiffPanelOpen = !m.mrDiffPanelOpen
+			return m, nil
+		case "C":
+			// General comment on MR
+			m.commentMode = commentModeGeneral
+			m.commentInput.SetValue("")
+			m.commentInput.Focus()
+			m.prevState = m.state
+			m.state = stateComment
+			return m, nil
 		case "a":
 			return m.promptConfirm("Approve MR", fmt.Sprintf("Approve MR !%d: %s?", m.mrDetail.IID, m.mrDetail.Title),
 				m.cmdApproveMR(m.mrDetail.IID))
@@ -441,7 +577,7 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 				return m.promptConfirm("Merge MR", fmt.Sprintf("Merge MR !%d: %s?", m.mrDetail.IID, m.mrDetail.Title),
 					m.cmdMergeMR(m.mrDetail.IID))
 			}
-		case "c":
+		case "x":
 			if m.mrDetail.State == "opened" {
 				return m.promptConfirm("Close MR", fmt.Sprintf("Close MR !%d?", m.mrDetail.IID),
 					m.cmdCloseMR(m.mrDetail.IID))
@@ -469,6 +605,37 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// ─── Comment key handler ──────────────────────────────────────────────────────
+
+func (m Model) handleCommentKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	switch key {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.commentInput.Blur()
+		m.state = m.prevState
+		return m, nil
+	case "ctrl+s", "enter":
+		body := strings.TrimSpace(m.commentInput.Value())
+		if body == "" {
+			m.state = m.prevState
+			return m, nil
+		}
+		m.commentInput.Blur()
+		m.state = stateLoading
+		m.loadMsg = "Posting comment..."
+		if m.commentMode == commentModeInline {
+			return m, m.cmdCreateInlineComment(body)
+		}
+		return m, m.cmdCreateMRComment(body)
+	default:
+		var cmd tea.Cmd
+		m.commentInput, cmd = m.commentInput.Update(msg)
+		return m, cmd
+	}
 }
 
 // ─── Server select key handler ────────────────────────────────────────────────
@@ -521,6 +688,107 @@ func (m Model) handleConfirmKey(key string) (tea.Model, tea.Cmd) {
 		m.confirm = nil
 	}
 	return m, nil
+}
+
+// ─── Diff cursor helpers ──────────────────────────────────────────────────────
+
+func (m *Model) diffLineCursorDown() {
+	if len(m.mrDiffFiles) == 0 {
+		return
+	}
+	f := m.mrDiffFiles[m.mrDiffFileIdx]
+	if m.mrDiffLineCursor < len(f.Lines)-1 {
+		m.mrDiffLineCursor++
+	} else if m.mrDiffFileIdx < len(m.mrDiffFiles)-1 {
+		// Move to next file
+		m.mrDiffFileIdx++
+		m.mrDiffLineCursor = 0
+		m.mrDiffScrollOffset = 0
+	}
+}
+
+func (m *Model) diffLineCursorUp() {
+	if m.mrDiffLineCursor > 0 {
+		m.mrDiffLineCursor--
+	} else if m.mrDiffFileIdx > 0 {
+		m.mrDiffFileIdx--
+		m.mrDiffScrollOffset = 0
+		if len(m.mrDiffFiles[m.mrDiffFileIdx].Lines) > 0 {
+			m.mrDiffLineCursor = len(m.mrDiffFiles[m.mrDiffFileIdx].Lines) - 1
+		}
+	}
+}
+
+func (m *Model) diffNextHunk() {
+	if len(m.mrDiffFiles) == 0 {
+		return
+	}
+	f := m.mrDiffFiles[m.mrDiffFileIdx]
+	for i := m.mrDiffLineCursor + 1; i < len(f.Lines); i++ {
+		if f.Lines[i].Type == "hunk" {
+			m.mrDiffLineCursor = i
+			return
+		}
+	}
+}
+
+func (m *Model) diffPrevHunk() {
+	if len(m.mrDiffFiles) == 0 {
+		return
+	}
+	f := m.mrDiffFiles[m.mrDiffFileIdx]
+	for i := m.mrDiffLineCursor - 1; i >= 0; i-- {
+		if f.Lines[i].Type == "hunk" {
+			m.mrDiffLineCursor = i
+			return
+		}
+	}
+}
+
+func (m *Model) updateDiffScroll() {
+	if len(m.mrDiffFiles) == 0 {
+		return
+	}
+	f := m.mrDiffFiles[m.mrDiffFileIdx]
+	totalLines := len(f.Lines)
+
+	// Calculate bodyH (matching viewDetail)
+	bodyH := m.height - 4
+	if bodyH < 1 {
+		bodyH = 1
+	}
+
+	startIdx := m.mrDiffFileIdx - 1
+	if startIdx < 0 {
+		startIdx = 0
+	}
+	endIdx := startIdx + 3
+	if endIdx > len(m.mrDiffFiles) {
+		endIdx = len(m.mrDiffFiles)
+		startIdx = endIdx - 3
+		if startIdx < 0 {
+			startIdx = 0
+		}
+	}
+	tabsLen := endIdx - startIdx
+
+	diffHeight := bodyH - (4 + tabsLen)
+	if diffHeight < 1 {
+		diffHeight = 1
+	}
+
+	if m.mrDiffLineCursor < m.mrDiffScrollOffset {
+		m.mrDiffScrollOffset = m.mrDiffLineCursor
+	}
+	if m.mrDiffLineCursor >= m.mrDiffScrollOffset+diffHeight {
+		m.mrDiffScrollOffset = m.mrDiffLineCursor - diffHeight + 1
+	}
+	if m.mrDiffScrollOffset+diffHeight > totalLines {
+		m.mrDiffScrollOffset = totalLines - diffHeight
+	}
+	if m.mrDiffScrollOffset < 0 {
+		m.mrDiffScrollOffset = 0
+	}
 }
 
 // ─── Cursor helpers ───────────────────────────────────────────────────────────
@@ -830,6 +1098,56 @@ func (m Model) cmdCancelPipeline(id int) tea.Cmd {
 	}
 }
 
+func (m Model) cmdLoadMRDiffs(iid int) tea.Cmd {
+	pid := m.project.ID
+	return func() tea.Msg {
+		files, err := m.client.GetMRDiffs(pid, iid)
+		if err != nil {
+			return errMsg{err}
+		}
+		ver, err := m.client.GetMRVersion(pid, iid)
+		if err != nil {
+			// Non-fatal: inline comments won't work but diffs still show
+			ver = nil
+		}
+		return mrDiffsLoadedMsg{files: files, version: ver}
+	}
+}
+
+func (m Model) cmdCreateMRComment(body string) tea.Cmd {
+	pid := m.project.ID
+	iid := m.mrDetail.IID
+	return func() tea.Msg {
+		if err := m.client.CreateMRComment(pid, iid, body); err != nil {
+			return errMsg{err}
+		}
+		return actionDoneMsg{"💬 Comment posted!"}
+	}
+}
+
+func (m Model) cmdCreateInlineComment(body string) tea.Cmd {
+	pid := m.project.ID
+	iid := m.mrDetail.IID
+	ver := m.mrDiffVersion
+	f := m.commentInlineFile
+	l := m.commentInlineLine
+	return func() tea.Msg {
+		if ver == nil {
+			return errMsg{fmt.Errorf("diff version SHAs not available; cannot post inline comment")}
+		}
+		err := m.client.CreateMRInlineComment(
+			pid, iid, body,
+			ver.BaseSHA, ver.StartSHA, ver.HeadSHA,
+			f.OldPath, f.NewPath,
+			l.OldLine, l.NewLine,
+		)
+		if err != nil {
+			return errMsg{err}
+		}
+		return actionDoneMsg{"💬 Inline comment posted!"}
+	}
+}
+
 func (m Model) cmdLoadMRDetail(iid int) tea.Cmd {
 	pid := m.project.ID
 	return func() tea.Msg {
@@ -887,6 +1205,8 @@ func (m Model) View() string {
 		return m.viewServerSelect()
 	case stateConfirm:
 		return m.viewConfirm()
+	case stateComment:
+		return m.viewCommentComposer()
 	case stateDetail:
 		return m.viewDetail()
 	default:
@@ -1180,34 +1500,182 @@ func (m Model) viewDetail() string {
 	header := m.viewHeader()
 	footer := m.viewDetailFooter()
 
+	bodyH := m.height - lipgloss.Height(header) - lipgloss.Height(footer) - 1
+	if bodyH < 1 {
+		bodyH = 1
+	}
+
 	var body string
 	switch m.tab {
 	case tabMRs:
-		body = m.viewMRDetail()
+		if m.mrDiffPanelOpen {
+			body = m.viewMRDetailSplit(bodyH)
+		} else {
+			body = m.viewMRDetail()
+		}
 	case tabPipelines:
 		body = m.viewPipelineDetail()
 	case tabIssues:
 		body = m.viewIssueDetail()
 	}
 
-	bodyH := m.height - lipgloss.Height(header) - lipgloss.Height(footer) - 1
-	if bodyH < 1 {
-		bodyH = 1
-	}
-
 	bodyPanel := lipgloss.NewStyle().Width(m.width).Height(bodyH).Render(body)
 	return lipgloss.JoinVertical(lipgloss.Left, header, bodyPanel, footer)
 }
 
+// viewMRDetailSplit renders left=MR detail + right=diff panel side by side.
+func (m Model) viewMRDetailSplit(bodyH int) string {
+	leftW := m.width * 2 / 5
+	rightW := m.width - leftW - 1 // -1 for separator
+
+	if leftW < 20 {
+		leftW = 20
+	}
+
+	// Left: existing MR detail (narrower)
+	leftContent := m.viewMRDetailForWidth(leftW)
+	left := lipgloss.NewStyle().Width(leftW).Render(leftContent)
+
+	// Separator
+	sep := lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("│\n", bodyH))
+
+	// Right: diff panel
+	right := lipgloss.NewStyle().Width(rightW).Render(m.viewDiffPanel(rightW, bodyH))
+
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, sep, right)
+}
+
+// viewDiffPanel renders the changes panel for the current MR.
+func (m Model) viewDiffPanel(w, h int) string {
+	var lines []string
+
+	if len(m.mrDiffFiles) == 0 {
+		lines = append(lines,
+			subtitleStyle.Render("  Changes"),
+			"",
+			dimStyle.Render("  Loading diffs..."),
+		)
+		return strings.Join(lines, "\n")
+	}
+
+	// File list header
+	fileCount := len(m.mrDiffFiles)
+	headerLine := subtitleStyle.Render("  Changes ") +
+		dimStyle.Render(fmt.Sprintf("(%d file(s))  n/p=file, J/K=hunk", fileCount))
+	lines = append(lines, headerLine)
+
+	// File tabs (show nearby files)
+	var fileTabs []string
+	startIdx := m.mrDiffFileIdx - 1
+	if startIdx < 0 {
+		startIdx = 0
+	}
+	endIdx := startIdx + 3
+	if endIdx > len(m.mrDiffFiles) {
+		endIdx = len(m.mrDiffFiles)
+		startIdx = endIdx - 3
+		if startIdx < 0 {
+			startIdx = 0
+		}
+	}
+
+	for i := startIdx; i < endIdx; i++ {
+		f := m.mrDiffFiles[i]
+		name := f.NewPath
+		if len(name) > 35 {
+			name = "…" + name[len(name)-34:]
+		}
+		label := fmt.Sprintf("+%d -%d %s", f.Added, f.Deleted, name)
+		if i == m.mrDiffFileIdx {
+			fileTabs = append(fileTabs, accentStyle.Render(" ▶ "+label))
+		} else {
+			fileTabs = append(fileTabs, dimStyle.Render("   "+label))
+		}
+	}
+	lines = append(lines, strings.Join(fileTabs, "\n"))
+	lines = append(lines, lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", w-2)))
+
+	tabsLen := endIdx - startIdx
+	diffHeight := h - (4 + tabsLen)
+	if diffHeight < 1 {
+		diffHeight = 1
+	}
+
+	// Current file diff lines
+	f := m.mrDiffFiles[m.mrDiffFileIdx]
+	startLine := m.mrDiffScrollOffset
+	endLine := startLine + diffHeight
+	if endLine > len(f.Lines) {
+		endLine = len(f.Lines)
+	}
+
+	for i := startLine; i < endLine; i++ {
+		dl := f.Lines[i]
+		selected := i == m.mrDiffLineCursor
+		content := dl.Content
+		// Clip to panel width
+		avail := w - 5
+		if avail < 1 {
+			avail = 1
+		}
+		if len(content) > avail {
+			content = content[:avail] + "…"
+		}
+
+		var rendered string
+		switch dl.Type {
+		case "added":
+			st := lipgloss.NewStyle().Foreground(colorSuccess)
+			if selected {
+				st = st.Background(colorBgHover).Bold(true)
+			}
+			rendered = st.Render("▶ " + content)
+		case "removed":
+			st := lipgloss.NewStyle().Foreground(colorError)
+			if selected {
+				st = st.Background(colorBgHover).Bold(true)
+			}
+			rendered = st.Render("▶ " + content)
+		case "hunk":
+			st := lipgloss.NewStyle().Foreground(colorInfo).Italic(true)
+			if selected {
+				st = st.Background(colorBgHover).Bold(true)
+			}
+			rendered = st.Render("  " + content)
+		default:
+			st := lipgloss.NewStyle().Foreground(colorTextDim)
+			if selected {
+				st = st.Background(colorBgHover)
+			}
+			rendered = st.Render("  " + content)
+		}
+		lines = append(lines, rendered)
+	}
+
+	// Help hint at bottom
+	lines = append(lines, "",
+		dimStyle.Render("  "+keyHint("N", "inline comment")+"  "+keyHint("Tab", "close panel")),
+	)
+
+	return strings.Join(lines, "\n")
+}
+
 func (m Model) viewMRDetail() string {
+	return m.viewMRDetailForWidth(m.width)
+}
+
+func (m Model) viewMRDetailForWidth(w int) string {
 	mr := m.mrDetail
 	if mr == nil {
 		return ""
 	}
 
-	w := m.width - 4
+	inner := w - 4
+	if inner < 4 {
+		inner = 4
+	}
 
-	title := boldStyle.Width(w).Render(fmt.Sprintf("!%d  %s", mr.IID, mr.Title))
+	title := boldStyle.Width(inner).Render(fmt.Sprintf("!%d  %s", mr.IID, mr.Title))
 	status := statusBadge(mr.State)
 	meta := lipgloss.JoinHorizontal(lipgloss.Center,
 		status,
@@ -1236,13 +1704,27 @@ func (m Model) viewMRDetail() string {
 		labels = strings.Join(lb, " ")
 	}
 
-	divider := lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", w))
+	divider := lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", inner))
 
 	desc := mr.Description
 	if desc == "" {
 		desc = dimStyle.Italic(true).Render("No description provided.")
 	} else {
-		desc = dimStyle.Width(w).Render(truncateLines(desc, 20, w))
+		desc = dimStyle.Width(inner).Render(truncateLines(desc, 20, inner))
+	}
+
+	diffBadge := ""
+	if len(m.mrDiffFiles) > 0 {
+		totalAdded, totalDeleted := 0, 0
+		for _, f := range m.mrDiffFiles {
+			totalAdded += f.Added
+			totalDeleted += f.Deleted
+		}
+		diffBadge = "  " + successStyle.Render(fmt.Sprintf("+%d", totalAdded)) +
+			" " + errorStyle.Render(fmt.Sprintf("-%d", totalDeleted)) +
+			" " + dimStyle.Render(fmt.Sprintf("in %d file(s)", len(m.mrDiffFiles)))
+	} else {
+		diffBadge = "  " + dimStyle.Render("(loading changes...)")
 	}
 
 	lines := []string{
@@ -1261,6 +1743,7 @@ func (m Model) viewMRDetail() string {
 	}
 	lines = append(lines,
 		lipgloss.NewStyle().PaddingLeft(2).Render(dimStyle.Render("Updated: "+mr.UpdatedAt+"  Created: "+mr.CreatedAt)),
+		lipgloss.NewStyle().PaddingLeft(2).Render(diffBadge),
 		"",
 		lipgloss.NewStyle().PaddingLeft(2).Render(divider),
 		"",
@@ -1380,6 +1863,52 @@ func (m Model) viewServerSelect() string {
 
 
 
+// ─── Comment composer overlay ─────────────────────────────────────────────────
+
+func (m Model) viewCommentComposer() string {
+	var title, hint string
+	if m.commentMode == commentModeInline {
+		l := m.commentInlineLine
+		f := m.commentInlineFile
+		fileName := f.NewPath
+		lineInfo := ""
+		if l.NewLine > 0 {
+			lineInfo = fmt.Sprintf("line %d", l.NewLine)
+		} else if l.OldLine > 0 {
+			lineInfo = fmt.Sprintf("old line %d", l.OldLine)
+		}
+		snippet := l.Content
+		if len(snippet) > 60 {
+			snippet = snippet[:60] + "…"
+		}
+		title = subtitleStyle.Render("Inline Comment") + "  " +
+			dimStyle.Render(fileName+" "+lineInfo)
+		hint = lipgloss.NewStyle().Foreground(colorSuccess).Italic(true).Render(snippet)
+	} else {
+		title = subtitleStyle.Render("MR Comment")
+		hint = dimStyle.Render(fmt.Sprintf("Commenting on MR !%d", m.mrDetail.IID))
+	}
+
+	inputBox := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorAccent).
+		Padding(0, 1).
+		Width(60).
+		Render(m.commentInput.View())
+
+	box := panelStyle.Padding(1, 3).Render(
+		lipgloss.JoinVertical(lipgloss.Left,
+			title,
+			hint,
+			"",
+			inputBox,
+			"",
+			dimStyle.Render(keyHint("Enter", "submit")+"  "+keyHint("Esc", "cancel")),
+		),
+	)
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+}
+
 // ─── Confirm dialog ───────────────────────────────────────────────────────────
 
 func (m Model) viewConfirm() string {
@@ -1459,14 +1988,28 @@ func (m Model) viewDetailFooter() string {
 	var hints []string
 	switch m.tab {
 	case tabMRs:
-		hints = []string{
-			keyHint("a", "approve"),
-			keyHint("m", "merge"),
-			keyHint("c", "close"),
-			keyHint("+", "vote up"),
-			keyHint("-", "vote down"),
-			keyHint("Esc", "back"),
-			keyHint("q", "quit"),
+		if m.mrDiffPanelOpen {
+			hints = []string{
+				keyHint("j/k", "scroll lines"),
+				keyHint("J/K", "prev/next hunk"),
+				keyHint("n/p", "prev/next file"),
+				keyHint("N", "inline comment"),
+				keyHint("Tab", "close diff"),
+				keyHint("Esc", "close diff"),
+				keyHint("q", "quit"),
+			}
+		} else {
+			hints = []string{
+				keyHint("Tab", "changes"),
+				keyHint("C", "comment"),
+				keyHint("a", "approve"),
+				keyHint("m", "merge"),
+				keyHint("x", "close"),
+				keyHint("+", "vote up"),
+				keyHint("-", "vote down"),
+				keyHint("Esc", "back"),
+				keyHint("q", "quit"),
+			}
 		}
 	case tabPipelines:
 		hints = []string{

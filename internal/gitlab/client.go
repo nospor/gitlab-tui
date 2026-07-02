@@ -8,6 +8,167 @@ import (
 	gl "gitlab.com/gitlab-org/api/client-go"
 )
 
+// ─── MR Diffs ─────────────────────────────────────────────────────────────────
+
+// DiffLine represents a single line in a diff.
+type DiffLine struct {
+	OldLine int    // 0 if line is added
+	NewLine int    // 0 if line is deleted
+	Type    string // "added", "removed", "context"
+	Content string // raw diff line text (with leading +/-/ )
+}
+
+// DiffFile represents a single changed file in an MR.
+type DiffFile struct {
+	OldPath   string
+	NewPath   string
+	Added     int
+	Deleted   int
+	Lines     []DiffLine
+}
+
+// GetMRDiffs fetches the list of changed files (with diff hunks) for an MR.
+func (c *Client) GetMRDiffs(projectID, mriid int) ([]*DiffFile, error) {
+	diffs, _, err := c.raw.MergeRequests.ListMergeRequestDiffs(projectID, int64(mriid), nil)
+	if err != nil {
+		return nil, fmt.Errorf("listing MR diffs: %w", err)
+	}
+
+	var result []*DiffFile
+	for _, d := range diffs {
+		f := &DiffFile{
+			OldPath: d.OldPath,
+			NewPath: d.NewPath,
+		}
+		lines := parseDiffLines(d.Diff)
+		for _, l := range lines {
+			if l.Type == "added" {
+				f.Added++
+			} else if l.Type == "removed" {
+				f.Deleted++
+			}
+		}
+		f.Lines = lines
+		result = append(result, f)
+	}
+	return result, nil
+}
+
+// parseDiffLines parses the raw unified diff string into DiffLine entries.
+func parseDiffLines(raw string) []DiffLine {
+	var lines []DiffLine
+	oldLine, newLine := 0, 0
+	for _, l := range splitLines(raw) {
+		if len(l) == 0 {
+			continue
+		}
+		switch l[0] {
+		case '@':
+			// hunk header — parse starting line numbers
+			var oStart, oLen, nStart, nLen int
+			// format: @@ -oStart,oLen +nStart,nLen @@
+			if _, err := fmt.Sscanf(l, "@@ -%d,%d +%d,%d", &oStart, &oLen, &nStart, &nLen); err != nil {
+				// try without len
+				fmt.Sscanf(l, "@@ -%d +%d", &oStart, &nStart) //nolint
+			}
+			oldLine = oStart
+			newLine = nStart
+			lines = append(lines, DiffLine{Type: "hunk", Content: l})
+		case '+':
+			lines = append(lines, DiffLine{NewLine: newLine, Type: "added", Content: l})
+			newLine++
+		case '-':
+			lines = append(lines, DiffLine{OldLine: oldLine, Type: "removed", Content: l})
+			oldLine++
+		default:
+			lines = append(lines, DiffLine{OldLine: oldLine, NewLine: newLine, Type: "context", Content: l})
+			oldLine++
+			newLine++
+		}
+	}
+	return lines
+}
+
+func splitLines(s string) []string {
+	var out []string
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\n' {
+			out = append(out, s[start:i])
+			start = i + 1
+		}
+	}
+	if start < len(s) {
+		out = append(out, s[start:])
+	}
+	return out
+}
+
+// ─── MR Comments ──────────────────────────────────────────────────────────────
+
+// CreateMRComment posts a general (non-inline) note on an MR.
+func (c *Client) CreateMRComment(projectID, mriid int, body string) error {
+	_, _, err := c.raw.Notes.CreateMergeRequestNote(projectID, int64(mriid), &gl.CreateMergeRequestNoteOptions{
+		Body: &body,
+	})
+	if err != nil {
+		return fmt.Errorf("creating MR comment: %w", err)
+	}
+	return nil
+}
+
+// CreateMRInlineComment posts an inline comment on a specific diff line.
+func (c *Client) CreateMRInlineComment(projectID, mriid int, body, baseSHA, startSHA, headSHA, oldPath, newPath string, oldLine, newLine int) error {
+	posType := "text"
+	pos := &gl.CreateMergeRequestDiscussionOptions{
+		Body: &body,
+		Position: &gl.PositionOptions{
+			BaseSHA:      gl.Ptr(baseSHA),
+			StartSHA:     gl.Ptr(startSHA),
+			HeadSHA:      gl.Ptr(headSHA),
+			PositionType: gl.Ptr(posType),
+			OldPath:      gl.Ptr(oldPath),
+			NewPath:      gl.Ptr(newPath),
+		},
+	}
+	if newLine > 0 {
+		nl := int64(newLine)
+		pos.Position.NewLine = &nl
+	} else if oldLine > 0 {
+		ol := int64(oldLine)
+		pos.Position.OldLine = &ol
+	}
+	_, _, err := c.raw.Discussions.CreateMergeRequestDiscussion(projectID, int64(mriid), pos)
+	if err != nil {
+		return fmt.Errorf("creating inline comment: %w", err)
+	}
+	return nil
+}
+
+// MRVersion holds the SHA information needed to post inline comments.
+type MRVersion struct {
+	BaseSHA  string
+	StartSHA string
+	HeadSHA  string
+}
+
+// GetMRVersion fetches the latest diff version SHAs for an MR.
+func (c *Client) GetMRVersion(projectID, mriid int) (*MRVersion, error) {
+	versions, _, err := c.raw.MergeRequests.GetMergeRequestDiffVersions(projectID, int64(mriid), nil)
+	if err != nil {
+		return nil, fmt.Errorf("getting MR version: %w", err)
+	}
+	if len(versions) == 0 {
+		return nil, fmt.Errorf("no diff versions found for MR !%d", mriid)
+	}
+	v := versions[0] // most recent version
+	return &MRVersion{
+		BaseSHA:  v.BaseCommitSHA,
+		StartSHA: v.StartCommitSHA,
+		HeadSHA:  v.HeadCommitSHA,
+	}, nil
+}
+
 // Client wraps the GitLab API client.
 type Client struct {
 	raw     *gl.Client
