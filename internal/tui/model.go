@@ -651,11 +651,15 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 					m.cmdCloseMR(m.mrDetail.IID))
 			}
 		case "+":
-			return m.promptConfirm("Toggle Vote Up", fmt.Sprintf("👍 Toggle vote up on MR !%d?", m.mrDetail.IID),
-				m.cmdVoteUpMR(m.mrDetail.IID))
+			m.state = stateLoading
+			m.prevState = stateDetail
+			m.loadMsg = "Voting..."
+			return m, m.cmdVoteUpMR(m.mrDetail.IID)
 		case "-":
-			return m.promptConfirm("Toggle Vote Down", fmt.Sprintf("👎 Toggle vote down on MR !%d?", m.mrDetail.IID),
-				m.cmdVoteDownMR(m.mrDetail.IID))
+			m.state = stateLoading
+			m.prevState = stateDetail
+			m.loadMsg = "Voting..."
+			return m, m.cmdVoteDownMR(m.mrDetail.IID)
 		}
 	case tabPipelines:
 		if m.pipelineDetail == nil {
