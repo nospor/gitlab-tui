@@ -57,6 +57,7 @@ func (c *Client) ListProjects(search string, page int) ([]*ProjectInfo, int, err
 	}
 	if search != "" {
 		opts.Search = gl.Ptr(search)
+		opts.SearchNamespaces = gl.Ptr(true)
 	}
 
 	projects, resp, err := c.raw.Projects.ListProjects(opts)
