@@ -106,6 +106,95 @@ func splitLines(s string) []string {
 
 // ─── MR Comments ──────────────────────────────────────────────────────────────
 
+// MRDiscussion represents a GitLab discussion thread on a merge request.
+type MRDiscussion struct {
+	ID             string
+	IndividualNote bool
+	Notes          []*MRNote
+}
+
+// MRNote represents a single comment or event in a discussion thread.
+type MRNote struct {
+	ID        int64
+	Body      string
+	Author    string
+	System    bool
+	CreatedAt string
+	Position  *MRNotePosition
+}
+
+// MRNotePosition holds path and line indicators for inline comments.
+type MRNotePosition struct {
+	NewPath string
+	NewLine int
+	OldPath string
+	OldLine int
+}
+
+// GetMRDiscussions fetches all discussion threads (general and inline comments) for an MR.
+func (c *Client) GetMRDiscussions(projectID, mriid int) ([]*MRDiscussion, error) {
+	opts := &gl.ListMergeRequestDiscussionsOptions{
+		ListOptions: gl.ListOptions{
+			Page:    1,
+			PerPage: 100,
+		},
+	}
+	var allDiscussions []*gl.Discussion
+	for {
+		discussions, resp, err := c.raw.Discussions.ListMergeRequestDiscussions(projectID, int64(mriid), opts)
+		if err != nil {
+			return nil, fmt.Errorf("listing MR discussions: %w", err)
+		}
+		allDiscussions = append(allDiscussions, discussions...)
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = int64(resp.NextPage)
+	}
+
+	var result []*MRDiscussion
+	for _, d := range allDiscussions {
+		disc := &MRDiscussion{
+			ID:             d.ID,
+			IndividualNote: d.IndividualNote,
+		}
+		for _, n := range d.Notes {
+			note := &MRNote{
+				ID:     n.ID,
+				Body:   n.Body,
+				System: n.System,
+			}
+			note.Author = n.Author.Username
+			if n.CreatedAt != nil {
+				note.CreatedAt = n.CreatedAt.Format("2006-01-02 15:04")
+			}
+			if n.Position != nil {
+				note.Position = &MRNotePosition{
+					NewPath: n.Position.NewPath,
+					NewLine: int(n.Position.NewLine),
+					OldPath: n.Position.OldPath,
+					OldLine: int(n.Position.OldLine),
+				}
+			}
+			disc.Notes = append(disc.Notes, note)
+		}
+		result = append(result, disc)
+	}
+	return result, nil
+}
+
+// ReplyToMRDiscussion replies to an existing discussion thread on an MR.
+func (c *Client) ReplyToMRDiscussion(projectID, mriid int, discussionID string, body string) error {
+	opt := &gl.AddMergeRequestDiscussionNoteOptions{
+		Body: &body,
+	}
+	_, _, err := c.raw.Discussions.AddMergeRequestDiscussionNote(projectID, int64(mriid), discussionID, opt)
+	if err != nil {
+		return fmt.Errorf("replying to MR discussion thread: %w", err)
+	}
+	return nil
+}
+
 // CreateMRComment posts a general (non-inline) note on an MR.
 func (c *Client) CreateMRComment(projectID, mriid int, body string) error {
 	_, _, err := c.raw.Notes.CreateMergeRequestNote(projectID, int64(mriid), &gl.CreateMergeRequestNoteOptions{

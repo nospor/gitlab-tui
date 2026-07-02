@@ -19,6 +19,7 @@ type commentMode int
 const (
 	commentModeGeneral commentMode = iota
 	commentModeInline
+	commentModeReply
 )
 
 // ─── Tabs ─────────────────────────────────────────────────────────────────────
@@ -81,6 +82,9 @@ type (
 		files   []*gitlab.DiffFile
 		version *gitlab.MRVersion
 	}
+	mrDiscussionsLoadedMsg struct {
+		discussions []*gitlab.MRDiscussion
+	}
 )
 
 // ─── Confirmation action ──────────────────────────────────────────────────────
@@ -119,6 +123,10 @@ type Model struct {
 	mrState     gitlab.MRState
 	mrDetail    *gitlab.MRInfo
 
+	// MR details scroll offset and discussions
+	mrDiscussions        []*gitlab.MRDiscussion
+	mrDetailScrollOffset int
+
 	// MR diff panel (shown in detail view)
 	mrDiffFiles        []*gitlab.DiffFile
 	mrDiffVersion      *gitlab.MRVersion
@@ -132,6 +140,7 @@ type Model struct {
 	commentMode     commentMode
 	commentInlineFile *gitlab.DiffFile  // target file for inline comment
 	commentInlineLine gitlab.DiffLine   // target line for inline comment
+	commentReplyDiscussionID string     // target discussion ID for replies
 
 	// Pipeline view
 	pipelines       []*gitlab.PipelineInfo
@@ -257,9 +266,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case mrDetailLoadedMsg:
 		m.mrDetail = msg.item
-		// Auto-load diffs when detail is freshly opened
+		// Auto-load diffs and discussions when detail is freshly opened
 		if m.mrDiffFiles == nil {
-			return m, m.cmdLoadMRDiffs(m.mrDetail.IID)
+			return m, tea.Batch(
+				m.cmdLoadMRDiffs(m.mrDetail.IID),
+				m.cmdLoadMRDiscussions(m.mrDetail.IID),
+			)
 		}
 		return m, nil
 
@@ -270,6 +282,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mrDiffLineCursor = 0
 		m.mrDiffScrollOffset = 0
 		m.updateDiffScroll()
+		return m, nil
+
+	case mrDiscussionsLoadedMsg:
+		m.mrDiscussions = msg.discussions
 		return m, nil
 
 	case pipelineLoadedMsg:
@@ -293,9 +309,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case actionDoneMsg:
 		m.doneMsg = msg.msg
 		m.state = m.prevState
-		// When returning to MR detail, reload the single MR so vote counts are fresh.
+		// When returning to MR detail, reload both details and discussions so vote counts and threads are fresh.
 		if m.state == stateDetail && m.tab == tabMRs && m.mrDetail != nil {
-			return m, m.cmdLoadMRDetail(m.mrDetail.IID)
+			return m, tea.Batch(
+				m.cmdLoadMRDetail(m.mrDetail.IID),
+				m.cmdLoadMRDiscussions(m.mrDetail.IID),
+			)
 		}
 		return m, m.reloadCurrent()
 
@@ -381,6 +400,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mrDiffFiles = nil
 			m.mrDiffVersion = nil
 			m.mrDiffPanelOpen = false
+			m.mrDiscussions = nil
+			m.mrDetailScrollOffset = 0
 			m.pipelineDetail = nil
 			m.issueDetail = nil
 		case stateServerSelect:
@@ -554,9 +575,38 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 				m.prevState = m.state
 				m.state = stateComment
 				return m, nil
+			case "r":
+				// Reply to inline comment on current line
+				if len(m.mrDiffFiles) == 0 {
+					return m, nil
+				}
+				f := m.mrDiffFiles[m.mrDiffFileIdx]
+				if m.mrDiffLineCursor >= len(f.Lines) {
+					return m, nil
+				}
+				l := f.Lines[m.mrDiffLineCursor]
+				discs := m.getDiscussionsForLine(f, l)
+				if len(discs) == 0 {
+					return m, nil // no thread to reply to
+				}
+				m.commentReplyDiscussionID = discs[0].ID
+				m.commentMode = commentModeReply
+				m.commentInput.SetValue("")
+				m.commentInput.Focus()
+				m.prevState = m.state
+				m.state = stateComment
+				return m, nil
 			}
 		}
 		switch key {
+		case "j", "down":
+			m.mrDetailScrollOffset++
+			return m, nil
+		case "k", "up":
+			if m.mrDetailScrollOffset > 0 {
+				m.mrDetailScrollOffset--
+			}
+			return m, nil
 		case "tab":
 			// Toggle diff panel
 			m.mrDiffPanelOpen = !m.mrDiffPanelOpen
@@ -629,6 +679,8 @@ func (m Model) handleCommentKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.loadMsg = "Posting comment..."
 		if m.commentMode == commentModeInline {
 			return m, m.cmdCreateInlineComment(body)
+		} else if m.commentMode == commentModeReply {
+			return m, m.cmdReplyToDiscussion(body)
 		}
 		return m, m.cmdCreateMRComment(body)
 	default:
@@ -745,19 +797,29 @@ func (m *Model) diffPrevHunk() {
 	}
 }
 
-func (m *Model) updateDiffScroll() {
-	if len(m.mrDiffFiles) == 0 {
-		return
+func (m Model) diffPanelWidth() int {
+	leftW := m.width * 2 / 5
+	if leftW < 20 {
+		leftW = 20
 	}
-	f := m.mrDiffFiles[m.mrDiffFileIdx]
-	totalLines := len(f.Lines)
+	return m.width - leftW - 1
+}
 
-	// Calculate bodyH (matching viewDetail)
-	bodyH := m.height - 4
+func (m Model) diffPanelHeight() int {
+	header := m.viewHeader()
+	footer := m.viewDetailFooter()
+	bodyH := m.height - lipgloss.Height(header) - lipgloss.Height(footer) - 1
 	if bodyH < 1 {
 		bodyH = 1
 	}
+	return bodyH
+}
 
+func (m Model) diffHeight() int {
+	bodyH := m.diffPanelHeight()
+	if len(m.mrDiffFiles) == 0 {
+		return bodyH - 4
+	}
 	startIdx := m.mrDiffFileIdx - 1
 	if startIdx < 0 {
 		startIdx = 0
@@ -771,20 +833,95 @@ func (m *Model) updateDiffScroll() {
 		}
 	}
 	tabsLen := endIdx - startIdx
-
-	diffHeight := bodyH - (4 + tabsLen)
-	if diffHeight < 1 {
-		diffHeight = 1
+	dh := bodyH - (4 + tabsLen)
+	if dh < 1 {
+		dh = 1
 	}
+	return dh
+}
+
+func (m Model) getScreenLinesForRange(f *gitlab.DiffFile, start, end int, panelWidth int) int {
+	lines := 0
+	for i := start; i <= end && i < len(f.Lines); i++ {
+		lines++ // for the code line itself
+		discs := m.getDiscussionsForLine(f, f.Lines[i])
+		for _, d := range discs {
+			for _, note := range d.Notes {
+				if note.System {
+					continue
+				}
+				bodyStyle := lipgloss.NewStyle().Width(panelWidth - 10)
+				bodyLines := strings.Split(bodyStyle.Render(note.Body), "\n")
+				lines += len(bodyLines)
+			}
+		}
+	}
+	return lines
+}
+
+func (m Model) getDiscussionsForLine(f *gitlab.DiffFile, dl gitlab.DiffLine) []*gitlab.MRDiscussion {
+	var matches []*gitlab.MRDiscussion
+	for _, d := range m.mrDiscussions {
+		if d.IndividualNote {
+			continue
+		}
+		if len(d.Notes) == 0 {
+			continue
+		}
+		n0 := d.Notes[0]
+		if n0.Position == nil {
+			continue
+		}
+		pos := n0.Position
+		pathMatch := false
+		if f.NewPath != "" && pos.NewPath == f.NewPath {
+			pathMatch = true
+		} else if f.OldPath != "" && pos.OldPath == f.OldPath {
+			pathMatch = true
+		}
+		if !pathMatch {
+			continue
+		}
+		lineMatch := false
+		if dl.Type == "added" && pos.NewLine > 0 && pos.NewLine == dl.NewLine {
+			lineMatch = true
+		} else if dl.Type == "removed" && pos.OldLine > 0 && pos.OldLine == dl.OldLine {
+			lineMatch = true
+		} else if dl.Type == "context" {
+			if (pos.NewLine > 0 && pos.NewLine == dl.NewLine) || (pos.OldLine > 0 && pos.OldLine == dl.OldLine) {
+				lineMatch = true
+			}
+		}
+		if lineMatch {
+			matches = append(matches, d)
+		}
+	}
+	return matches
+}
+
+func (m *Model) updateDiffScroll() {
+	if len(m.mrDiffFiles) == 0 {
+		return
+	}
+	f := m.mrDiffFiles[m.mrDiffFileIdx]
+	totalLines := len(f.Lines)
+	diffHeight := m.diffHeight()
+	w := m.diffPanelWidth()
 
 	if m.mrDiffLineCursor < m.mrDiffScrollOffset {
 		m.mrDiffScrollOffset = m.mrDiffLineCursor
 	}
-	if m.mrDiffLineCursor >= m.mrDiffScrollOffset+diffHeight {
-		m.mrDiffScrollOffset = m.mrDiffLineCursor - diffHeight + 1
+
+	for m.mrDiffScrollOffset < m.mrDiffLineCursor {
+		screenLines := m.getScreenLinesForRange(f, m.mrDiffScrollOffset, m.mrDiffLineCursor, w)
+		if screenLines <= diffHeight {
+			break
+		}
+		m.mrDiffScrollOffset++
 	}
-	if m.mrDiffScrollOffset+diffHeight > totalLines {
-		m.mrDiffScrollOffset = totalLines - diffHeight
+
+	if m.mrDiffScrollOffset >= totalLines {
+		m.mrDiffScrollOffset = totalLines - 1
 	}
 	if m.mrDiffScrollOffset < 0 {
 		m.mrDiffScrollOffset = 0
@@ -871,7 +1008,10 @@ func (m Model) openDetail() (Model, tea.Cmd) {
 			m.mrDetail = m.mrs[m.mrCursor] // placeholder until fresh fetch arrives
 			m.prevState = stateMain
 			m.state = stateDetail
-			return m, m.cmdLoadMRDetail(m.mrDetail.IID)
+			return m, tea.Batch(
+				m.cmdLoadMRDetail(m.mrDetail.IID),
+				m.cmdLoadMRDiscussions(m.mrDetail.IID),
+			)
 		}
 	case tabPipelines:
 		if m.pipelineCursor < len(m.pipelines) {
@@ -1145,6 +1285,29 @@ func (m Model) cmdCreateInlineComment(body string) tea.Cmd {
 			return errMsg{err}
 		}
 		return actionDoneMsg{"💬 Inline comment posted!"}
+	}
+}
+
+func (m Model) cmdLoadMRDiscussions(iid int) tea.Cmd {
+	pid := m.project.ID
+	return func() tea.Msg {
+		discs, err := m.client.GetMRDiscussions(pid, iid)
+		if err != nil {
+			return errMsg{err}
+		}
+		return mrDiscussionsLoadedMsg{discussions: discs}
+	}
+}
+
+func (m Model) cmdReplyToDiscussion(body string) tea.Cmd {
+	pid := m.project.ID
+	iid := m.mrDetail.IID
+	discussionID := m.commentReplyDiscussionID
+	return func() tea.Msg {
+		if err := m.client.ReplyToMRDiscussion(pid, iid, discussionID, body); err != nil {
+			return errMsg{err}
+		}
+		return actionDoneMsg{"💬 Reply posted!"}
 	}
 }
 
@@ -1511,7 +1674,7 @@ func (m Model) viewDetail() string {
 		if m.mrDiffPanelOpen {
 			body = m.viewMRDetailSplit(bodyH)
 		} else {
-			body = m.viewMRDetail()
+			body = m.viewMRDetail(bodyH)
 		}
 	case tabPipelines:
 		body = m.viewPipelineDetail()
@@ -1603,13 +1766,9 @@ func (m Model) viewDiffPanel(w, h int) string {
 
 	// Current file diff lines
 	f := m.mrDiffFiles[m.mrDiffFileIdx]
-	startLine := m.mrDiffScrollOffset
-	endLine := startLine + diffHeight
-	if endLine > len(f.Lines) {
-		endLine = len(f.Lines)
-	}
+	renderedCount := 0
 
-	for i := startLine; i < endLine; i++ {
+	for i := m.mrDiffScrollOffset; i < len(f.Lines) && renderedCount < diffHeight; i++ {
 		dl := f.Lines[i]
 		selected := i == m.mrDiffLineCursor
 		content := dl.Content
@@ -1650,18 +1809,84 @@ func (m Model) viewDiffPanel(w, h int) string {
 			rendered = st.Render("  " + content)
 		}
 		lines = append(lines, rendered)
+		renderedCount++
+
+		// Under the line, render discussions if any
+		discs := m.getDiscussionsForLine(f, dl)
+		for _, d := range discs {
+			for _, note := range d.Notes {
+				if note.System {
+					continue
+				}
+				if renderedCount >= diffHeight {
+					break
+				}
+
+				// Wrap comment body using lipgloss
+				bodyStyle := lipgloss.NewStyle().Foreground(colorTextDim).Width(w - 10)
+				bodyLines := strings.Split(bodyStyle.Render(note.Body), "\n")
+
+				commentStyle := lipgloss.NewStyle().Foreground(colorTeal).Italic(true)
+				for idx, bl := range bodyLines {
+					if renderedCount >= diffHeight {
+						break
+					}
+					var lineStr string
+					if idx == 0 {
+						lineStr = commentStyle.Render("    💬 @"+note.Author+": ") + bl
+					} else {
+						lineStr = "        " + bl
+					}
+					lines = append(lines, lineStr)
+					renderedCount++
+				}
+			}
+		}
+	}
+
+	// Pad empty lines if we have fewer lines than diffHeight
+	for renderedCount < diffHeight {
+		lines = append(lines, "")
+		renderedCount++
 	}
 
 	// Help hint at bottom
-	lines = append(lines, "",
-		dimStyle.Render("  "+keyHint("N", "inline comment")+"  "+keyHint("Tab", "close panel")),
-	)
+	hintsStr := "  " + keyHint("N", "new comment")
+	if m.mrDiffLineCursor < len(f.Lines) {
+		discs := m.getDiscussionsForLine(f, f.Lines[m.mrDiffLineCursor])
+		if len(discs) > 0 {
+			hintsStr += "  " + keyHint("r", "reply")
+		}
+	}
+	hintsStr += "  " + keyHint("Tab", "close panel")
+	lines = append(lines, "", dimStyle.Render(hintsStr))
 
 	return strings.Join(lines, "\n")
 }
 
-func (m Model) viewMRDetail() string {
-	return m.viewMRDetailForWidth(m.width)
+func (m Model) viewMRDetail(bodyH int) string {
+	content := m.viewMRDetailForWidth(m.width)
+	lines := strings.Split(content, "\n")
+
+	totalLines := len(lines)
+	maxScroll := totalLines - bodyH
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	offset := m.mrDetailScrollOffset
+	if offset > maxScroll {
+		offset = maxScroll
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	end := offset + bodyH
+	if end > totalLines {
+		end = totalLines
+	}
+
+	return strings.Join(lines[offset:end], "\n")
 }
 
 func (m Model) viewMRDetailForWidth(w int) string {
@@ -1755,6 +1980,78 @@ func (m Model) viewMRDetailForWidth(w int) string {
 		lipgloss.NewStyle().PaddingLeft(2).Render(
 			lipgloss.NewStyle().Foreground(colorInfo).Render("🔗 "+mr.WebURL)),
 	)
+
+	// Append discussions/comments
+	if len(m.mrDiscussions) > 0 {
+		lines = append(lines,
+			"",
+			lipgloss.NewStyle().PaddingLeft(2).Render(subtitleStyle.Render("💬 Discussions & Comments")),
+			lipgloss.NewStyle().PaddingLeft(2).Render(divider),
+		)
+
+		for _, d := range m.mrDiscussions {
+			if len(d.Notes) == 0 {
+				continue
+			}
+
+			for noteIdx, note := range d.Notes {
+				var noteContent string
+				if note.System {
+					noteContent = dimStyle.Italic(true).Render(fmt.Sprintf("• %s (%s)", note.Body, note.CreatedAt))
+				} else {
+					var threadHeader string
+					if noteIdx == 0 {
+						if note.Position != nil {
+							fileInfo := note.Position.NewPath
+							if fileInfo == "" {
+								fileInfo = note.Position.OldPath
+							}
+							lineNum := note.Position.NewLine
+							if lineNum == 0 {
+								lineNum = note.Position.OldLine
+							}
+							threadHeader = accentStyle.Render(fmt.Sprintf("Thread on %s:L%d", fileInfo, lineNum))
+						} else {
+							threadHeader = accentStyle.Render("General Thread")
+						}
+					}
+
+					authorPart := boldStyle.Render("@" + note.Author)
+					timePart := dimStyle.Render(" on " + note.CreatedAt)
+
+					bodyStyle := lipgloss.NewStyle().Foreground(colorText).Width(inner - 4)
+					bodyWrapped := bodyStyle.Render(note.Body)
+
+					indent := "  "
+					if noteIdx > 0 {
+						indent = "    "
+					}
+
+					var blockLines []string
+					if threadHeader != "" {
+						blockLines = append(blockLines, indent+threadHeader)
+					}
+					blockLines = append(blockLines, indent+authorPart+timePart)
+
+					for _, bLine := range strings.Split(bodyWrapped, "\n") {
+						blockLines = append(blockLines, indent+"  "+bLine)
+					}
+
+					noteContent = strings.Join(blockLines, "\n")
+				}
+
+				lines = append(lines, lipgloss.NewStyle().PaddingLeft(2).Render(noteContent), "")
+			}
+			lines = append(lines, lipgloss.NewStyle().PaddingLeft(2).Render(divider))
+		}
+	} else {
+		lines = append(lines,
+			"",
+			lipgloss.NewStyle().PaddingLeft(2).Render(subtitleStyle.Render("💬 Discussions & Comments")),
+			lipgloss.NewStyle().PaddingLeft(2).Render(divider),
+			lipgloss.NewStyle().PaddingLeft(2).Render(dimStyle.Italic(true).Render("No comments yet or loading...")),
+		)
+	}
 
 	return strings.Join(lines, "\n")
 }
@@ -2000,6 +2297,7 @@ func (m Model) viewDetailFooter() string {
 			}
 		} else {
 			hints = []string{
+				keyHint("j/k", "scroll"),
 				keyHint("Tab", "changes"),
 				keyHint("C", "comment"),
 				keyHint("a", "approve"),
