@@ -26,10 +26,10 @@ const (
 )
 
 var tabLabels = [tabCount]string{
-	"  Merge Requests",
-	"  Pipelines",
-	"  Issues",
-	"  Projects",
+	"  1: Merge Requests",
+	"  2: Pipelines",
+	"  3: Issues",
+	"  4: Projects",
 }
 
 // ─── App state ────────────────────────────────────────────────────────────────
@@ -1347,6 +1347,7 @@ func (m Model) viewConfirm() string {
 
 func (m Model) viewFooter() string {
 	hints := []string{
+		keyHint("Tab/1-4", "tabs"),
 		keyHint("↑↓", "navigate"),
 		keyHint("Enter", "open"),
 		keyHint("r", "refresh"),
