@@ -238,6 +238,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case errMsg:
+		if m.state != stateError {
+			m.prevState = m.state
+		}
 		m.state = stateError
 		m.errText = msg.err.Error()
 		return m, nil
@@ -382,7 +385,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
 	// Global quit — works in every state
-	if key == "ctrl+c" || (key == "q" && (m.tab != tabProjects || m.state == stateDetail)) {
+	if key == "ctrl+c" || (key == "q" && (m.tab != tabProjects || m.state == stateDetail || m.state == stateError || m.state == stateLoading)) {
 		return m, tea.Quit
 	}
 
@@ -409,6 +412,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case stateConfirm:
 			m.state = m.prevState
 			m.confirm = nil
+		case stateError:
+			if m.prevState == stateLoading || m.prevState == stateError {
+				m.state = stateMain
+			} else {
+				m.state = m.prevState
+			}
 		}
 		return m, nil
 	}
@@ -422,6 +431,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleServerSelectKey(key)
 	case stateConfirm:
 		return m.handleConfirmKey(key)
+	case stateError:
+		if key == "enter" || key == " " {
+			if m.prevState == stateLoading || m.prevState == stateError {
+				m.state = stateMain
+			} else {
+				m.state = m.prevState
+			}
+			return m, nil
+		}
 	}
 	return m, nil
 }
@@ -706,6 +724,7 @@ func (m Model) handleServerSelectKey(key string) (tea.Model, tea.Cmd) {
 		srv := m.cfg.Servers[m.serverCursor]
 		c, err := gitlab.NewClient(srv.URL, srv.Token)
 		if err != nil {
+			m.prevState = m.state
 			m.state = stateError
 			m.errText = err.Error()
 			return m, nil
@@ -1379,29 +1398,73 @@ func (m Model) View() string {
 
 // ─── Loading screen ───────────────────────────────────────────────────────────
 
+func (m Model) viewBackground() string {
+	state := m.prevState
+	if state == stateLoading || state == stateError {
+		state = stateMain
+	}
+	switch state {
+	case stateServerSelect:
+		return m.viewServerSelect()
+	case stateConfirm:
+		return m.viewConfirm()
+	case stateComment:
+		return m.viewCommentComposer()
+	case stateDetail:
+		return m.viewDetail()
+	default:
+		return m.viewMain()
+	}
+}
+
 func (m Model) viewLoading() string {
-	center := lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center,
-		lipgloss.JoinVertical(lipgloss.Center,
-			accentStyle.Render("GitLab TUI"),
-			"",
-			m.spin.View()+" "+dimStyle.Render(m.loadMsg),
-		),
-	)
-	return baseStyle.Width(m.width).Height(m.height).Render(center)
+	bg := m.viewBackground()
+
+	box := panelStyle.Padding(1, 4).Render(lipgloss.JoinVertical(lipgloss.Center,
+		accentStyle.Render("GitLab TUI"),
+		"",
+		m.spin.View()+" "+dimStyle.Render(m.loadMsg),
+	))
+
+	dlgWidth := lipgloss.Width(box)
+	dlgHeight := lipgloss.Height(box)
+
+	startX := (m.width - dlgWidth) / 2
+	startY := (m.height - dlgHeight) / 2
+
+	return overlay(bg, box, m.width, m.height, startX, startY)
 }
 
 // ─── Error screen ─────────────────────────────────────────────────────────────
 
 func (m Model) viewError() string {
-	box := lipgloss.JoinVertical(lipgloss.Center,
-		errorStyle.Render("⚠ Error"),
+	bg := m.viewBackground()
+
+	maxTextWidth := m.width - 12
+	if maxTextWidth < 20 {
+		maxTextWidth = 20
+	}
+	if maxTextWidth > 80 {
+		maxTextWidth = 80
+	}
+
+	wrappedText := dimStyle.Width(maxTextWidth).Align(lipgloss.Center).Render(m.errText)
+
+	box := panelStyle.Padding(1, 4).Render(lipgloss.JoinVertical(lipgloss.Center,
+		errorStyle.Render("⚠  Error"),
 		"",
-		dimStyle.Width(m.width-10).Render(m.errText),
+		wrappedText,
 		"",
-		mutedStyle.Render("Press q to quit, or check your config at ~/.config/gitlab-tui/config.json"),
-	)
-	center := lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
-	return baseStyle.Width(m.width).Height(m.height).Render(center)
+		mutedStyle.Render("Press Esc or Enter to dismiss"),
+	))
+
+	dlgWidth := lipgloss.Width(box)
+	dlgHeight := lipgloss.Height(box)
+
+	startX := (m.width - dlgWidth) / 2
+	startY := (m.height - dlgHeight) / 2
+
+	return overlay(bg, box, m.width, m.height, startX, startY)
 }
 
 // ─── Main view ────────────────────────────────────────────────────────────────
@@ -2155,7 +2218,13 @@ func (m Model) viewServerSelect() string {
 	rows = append(rows, "", dimStyle.Render("↑↓ navigate  Enter select  Esc cancel"))
 
 	box := panelStyle.Padding(1, 3).Render(strings.Join(rows, "\n"))
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+	
+	bg := m.viewBackground()
+	dlgWidth := lipgloss.Width(box)
+	dlgHeight := lipgloss.Height(box)
+	startX := (m.width - dlgWidth) / 2
+	startY := (m.height - dlgHeight) / 2
+	return overlay(bg, box, m.width, m.height, startX, startY)
 }
 
 
@@ -2203,7 +2272,13 @@ func (m Model) viewCommentComposer() string {
 			dimStyle.Render(keyHint("Enter", "submit")+"  "+keyHint("Esc", "cancel")),
 		),
 	)
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+
+	bg := m.viewBackground()
+	dlgWidth := lipgloss.Width(box)
+	dlgHeight := lipgloss.Height(box)
+	startX := (m.width - dlgWidth) / 2
+	startY := (m.height - dlgHeight) / 2
+	return overlay(bg, box, m.width, m.height, startX, startY)
 }
 
 // ─── Confirm dialog ───────────────────────────────────────────────────────────
@@ -2223,7 +2298,13 @@ func (m Model) viewConfirm() string {
 			errorStyle.Render("[n] No"),
 		),
 	))
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+
+	bg := m.viewBackground()
+	dlgWidth := lipgloss.Width(box)
+	dlgHeight := lipgloss.Height(box)
+	startX := (m.width - dlgWidth) / 2
+	startY := (m.height - dlgHeight) / 2
+	return overlay(bg, box, m.width, m.height, startX, startY)
 }
 
 // ─── Footer / help bar ────────────────────────────────────────────────────────
