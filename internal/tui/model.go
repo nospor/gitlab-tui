@@ -42,7 +42,6 @@ const (
 	stateMain
 	stateDetail
 	stateServerSelect
-	stateProjectSelect
 	stateConfirm
 )
 
@@ -205,7 +204,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.project == nil {
 			// No project detected — go straight to main so user can pick one
 			m.state = stateMain
-			return m, nil
+			m.tab = tabProjects
+			m.projectSearch.Focus()
+			return m, m.cmdLoadProjects()
 		}
 		m.state = stateLoading
 		m.loadMsg = "Loading merge requests..."
@@ -244,14 +245,56 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.reloadCurrent()
 
 	case tea.KeyMsg:
+		if m.state == stateMain && m.tab == tabProjects && m.projectSearch.Focused() {
+			key := msg.String()
+			switch key {
+			case "ctrl+c":
+				return m, tea.Quit
+			case "tab":
+				m.tab = (m.tab + 1) % tabCount
+				m.projectSearch.Blur()
+				return m, m.reloadCurrent()
+			case "shift+tab":
+				m.tab = (m.tab - 1 + tabCount) % tabCount
+				m.projectSearch.Blur()
+				return m, m.reloadCurrent()
+			case "up":
+				if m.projectCursor > 0 {
+					m.projectCursor--
+				}
+				return m, nil
+			case "down":
+				if m.projectCursor < len(m.projects)-1 {
+					m.projectCursor++
+				}
+				return m, nil
+			case "enter":
+				if len(m.projects) > 0 && m.projectCursor < len(m.projects) {
+					m.project = m.projects[m.projectCursor]
+					m.tab = tabMRs
+					m.mrPage = 1
+					m.pipelinePage = 1
+					m.issuePage = 1
+					m.projectSearch.Blur()
+					return m, m.cmdLoadMRs()
+				}
+				return m, nil
+			case "esc":
+				m.projectSearch.SetValue("")
+				m.projectPage = 1
+				return m, m.cmdLoadProjects()
+			case "pgdown":
+				return m.nextPage()
+			case "pgup":
+				return m.prevPage()
+			default:
+				var cmd tea.Cmd
+				m.projectSearch, cmd = m.projectSearch.Update(msg)
+				m.projectPage = 1
+				return m, tea.Batch(cmd, m.cmdLoadProjects())
+			}
+		}
 		return m.handleKey(msg)
-	}
-
-	// Forward to text input if in project search
-	if m.state == stateProjectSelect {
-		var cmd tea.Cmd
-		m.projectSearch, cmd = m.projectSearch.Update(msg)
-		return m, tea.Batch(cmd, m.cmdLoadProjects())
 	}
 
 	return m, nil
@@ -261,7 +304,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
 	// Global quit — works in every state
-	if key == "ctrl+c" || key == "q" {
+	if key == "ctrl+c" || (key == "q" && (m.tab != tabProjects || m.state == stateDetail)) {
 		return m, tea.Quit
 	}
 
@@ -273,8 +316,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mrDetail = nil
 			m.pipelineDetail = nil
 			m.issueDetail = nil
-		case stateProjectSelect:
-			m.state = stateMain
 		case stateServerSelect:
 			m.state = stateMain
 		case stateConfirm:
@@ -289,8 +330,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleMainKey(key)
 	case stateDetail:
 		return m.handleDetailKey(key)
-	case stateProjectSelect:
-		return m.handleProjectSelectKey(key)
 	case stateServerSelect:
 		return m.handleServerSelectKey(key)
 	case stateConfirm:
@@ -305,21 +344,35 @@ func (m Model) handleMainKey(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "tab", "right", "l":
 		m.tab = (m.tab + 1) % tabCount
+		if m.tab == tabProjects {
+			m.projectSearch.Focus()
+		} else {
+			m.projectSearch.Blur()
+		}
 		return m, m.reloadCurrent()
 	case "shift+tab", "left", "h":
 		m.tab = (m.tab - 1 + tabCount) % tabCount
+		if m.tab == tabProjects {
+			m.projectSearch.Focus()
+		} else {
+			m.projectSearch.Blur()
+		}
 		return m, m.reloadCurrent()
 	case "1":
 		m.tab = tabMRs
+		m.projectSearch.Blur()
 		return m, m.cmdLoadMRs()
 	case "2":
 		m.tab = tabPipelines
+		m.projectSearch.Blur()
 		return m, m.cmdLoadPipelines()
 	case "3":
 		m.tab = tabIssues
+		m.projectSearch.Blur()
 		return m, m.cmdLoadIssues()
 	case "4":
 		m.tab = tabProjects
+		m.projectSearch.Focus()
 		return m, m.cmdLoadProjects()
 	case "j", "down":
 		m.moveCursorDown()
@@ -330,6 +383,10 @@ func (m Model) handleMainKey(key string) (tea.Model, tea.Cmd) {
 	case "n":
 		return m.nextPage()
 	case "p":
+		return m.prevPage()
+	case "pgdown":
+		return m.nextPage()
+	case "pgup":
 		return m.prevPage()
 	case "r":
 		return m, m.reloadCurrent()
@@ -354,13 +411,6 @@ func (m Model) handleMainKey(key string) (tea.Model, tea.Cmd) {
 		m.serverCursor = m.serverIdx
 		m.prevState = m.state
 		m.state = stateServerSelect
-	case "P":
-		// Switch project
-		m.prevState = m.state
-		m.state = stateProjectSelect
-		m.projectSearch.Focus()
-		m.projectPage = 1
-		return m, m.cmdLoadProjects()
 	}
 	return m, nil
 }
@@ -406,41 +456,6 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// ─── Project select key handler ───────────────────────────────────────────────
-
-func (m Model) handleProjectSelectKey(key string) (tea.Model, tea.Cmd) {
-	switch key {
-	case "j", "down":
-		if m.projectCursor < len(m.projects)-1 {
-			m.projectCursor++
-		}
-	case "k", "up":
-		if m.projectCursor > 0 {
-			m.projectCursor--
-		}
-	case "enter":
-		if len(m.projects) > 0 {
-			m.project = m.projects[m.projectCursor]
-			m.state = stateMain
-			m.mrPage = 1
-			m.pipelinePage = 1
-			m.issuePage = 1
-			return m, m.reloadCurrent()
-		}
-	case "n":
-		if m.projectPage < m.projectTotalPage {
-			m.projectPage++
-			return m, m.cmdLoadProjects()
-		}
-	case "p":
-		if m.projectPage > 1 {
-			m.projectPage--
-			return m, m.cmdLoadProjects()
-		}
-	}
-	return m, nil
-}
-
 // ─── Server select key handler ────────────────────────────────────────────────
 
 func (m Model) handleServerSelectKey(key string) (tea.Model, tea.Cmd) {
@@ -464,7 +479,8 @@ func (m Model) handleServerSelectKey(key string) (tea.Model, tea.Cmd) {
 		m.client = c
 		m.serverIdx = m.serverCursor
 		m.project = nil
-		m.state = stateProjectSelect
+		m.state = stateMain
+		m.tab = tabProjects
 		m.projectPage = 1
 		m.projectSearch.SetValue("")
 		m.projectSearch.Focus()
@@ -591,6 +607,7 @@ func (m Model) openDetail() (Model, tea.Cmd) {
 			m.state = stateMain
 			m.tab = tabMRs
 			m.mrPage = 1
+			m.projectSearch.Blur()
 			return m, m.cmdLoadMRs()
 		}
 	}
@@ -614,6 +631,11 @@ func (m Model) nextPage() (Model, tea.Cmd) {
 			m.issuePage++
 			return m, m.cmdLoadIssues()
 		}
+	case tabProjects:
+		if m.projectPage < m.projectTotalPage {
+			m.projectPage++
+			return m, m.cmdLoadProjects()
+		}
 	}
 	return m, nil
 }
@@ -635,12 +657,20 @@ func (m Model) prevPage() (Model, tea.Cmd) {
 			m.issuePage--
 			return m, m.cmdLoadIssues()
 		}
+	case tabProjects:
+		if m.projectPage > 1 {
+			m.projectPage--
+			return m, m.cmdLoadProjects()
+		}
 	}
 	return m, nil
 }
 
 func (m Model) reloadCurrent() tea.Cmd {
 	if m.project == nil {
+		if m.tab == tabProjects {
+			return m.cmdLoadProjects()
+		}
 		return nil
 	}
 	switch m.tab {
@@ -798,8 +828,6 @@ func (m Model) View() string {
 		return m.viewError()
 	case stateServerSelect:
 		return m.viewServerSelect()
-	case stateProjectSelect:
-		return m.viewProjectSelect()
 	case stateConfirm:
 		return m.viewConfirm()
 	case stateDetail:
@@ -917,8 +945,8 @@ func (m Model) viewTabs() string {
 }
 
 func (m Model) viewBody() string {
-	if m.project == nil {
-		lines := []string{dimStyle.Render("No project selected. Press ") + accentStyle.Render("P") + dimStyle.Render(" to pick a project.")}
+	if m.project == nil && m.tab != tabProjects {
+		lines := []string{dimStyle.Render("No project selected. Press ") + accentStyle.Render("4") + dimStyle.Render(" to select a project.")}
 		if m.startupWarn != "" {
 			lines = append(lines, "", warningStyle.Render("⚠ "+m.startupWarn))
 		}
@@ -1057,31 +1085,36 @@ func (m Model) viewIssueList() string {
 // ─── Project list (inline, inside main view) ──────────────────────────────────
 
 func (m Model) viewProjectList() string {
-	if len(m.projects) == 0 {
-		return dimStyle.Padding(2).Render("No projects found.")
-	}
-
 	var rows []string
-	for i, p := range m.projects {
-		selected := i == m.projectCursor
 
-		line := fmt.Sprintf("%-45s  %s",
-			truncate(p.NameWithNamespace, 45),
-			dimStyle.Render(p.PathWithNamespace),
-		)
-
-		if selected {
-			rows = append(rows, selectedStyle.Width(m.width-2).Render("▶ "+line))
-		} else {
-			rows = append(rows, normalItemStyle.Width(m.width-2).Render("  "+line))
-		}
-	}
+	// Render the search box
+	rows = append(rows, "  "+m.projectSearch.View(), "")
 
 	header := lipgloss.NewStyle().Foreground(colorMuted).PaddingLeft(2).
 		Render(fmt.Sprintf("%-45s  %-40s", "Project", "Path"))
 	header += "\n" + lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", m.width-2))
+	rows = append(rows, header)
 
-	return header + "\n" + strings.Join(rows, "\n")
+	if len(m.projects) == 0 {
+		rows = append(rows, dimStyle.Padding(2).Render("No projects found."))
+	} else {
+		for i, p := range m.projects {
+			selected := i == m.projectCursor
+
+			line := fmt.Sprintf("%-45s  %s",
+				truncate(p.NameWithNamespace, 45),
+				dimStyle.Render(p.PathWithNamespace),
+			)
+
+			if selected {
+				rows = append(rows, selectedStyle.Width(m.width-2).Render("▶ "+line))
+			} else {
+				rows = append(rows, normalItemStyle.Width(m.width-2).Render("  "+line))
+			}
+		}
+	}
+
+	return strings.Join(rows, "\n")
 }
 
 // ─── Detail views ─────────────────────────────────────────────────────────────
@@ -1288,30 +1321,7 @@ func (m Model) viewServerSelect() string {
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
 }
 
-// ─── Project select overlay ───────────────────────────────────────────────────
 
-func (m Model) viewProjectSelect() string {
-	var rows []string
-	rows = append(rows, subtitleStyle.Render("Select Project"), "")
-	rows = append(rows, m.projectSearch.View(), "")
-
-	for i, p := range m.projects {
-		line := fmt.Sprintf("%-40s  %s", truncate(p.NameWithNamespace, 40), dimStyle.Render(p.PathWithNamespace))
-		if i == m.projectCursor {
-			rows = append(rows, selectedStyle.Width(60).Render("▶ "+line))
-		} else {
-			rows = append(rows, normalItemStyle.Width(60).Render("  "+line))
-		}
-	}
-
-	if m.projectTotalPage > 1 {
-		rows = append(rows, "", dimStyle.Render(fmt.Sprintf("Page %d/%d — n/p to navigate pages", m.projectPage, m.projectTotalPage)))
-	}
-	rows = append(rows, "", dimStyle.Render("↑↓ navigate  Enter select  Esc cancel"))
-
-	box := panelStyle.Padding(1, 3).Render(strings.Join(rows, "\n"))
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
-}
 
 // ─── Confirm dialog ───────────────────────────────────────────────────────────
 
@@ -1340,7 +1350,6 @@ func (m Model) viewFooter() string {
 		keyHint("↑↓", "navigate"),
 		keyHint("Enter", "open"),
 		keyHint("r", "refresh"),
-		keyHint("P", "project"),
 		keyHint("S", "server"),
 		keyHint("q", "quit"),
 	}
@@ -1349,8 +1358,14 @@ func (m Model) viewFooter() string {
 		hints = append(hints, keyHint("s", "state:"+string(m.mrState)))
 	}
 
-	if m.mrTotalPage > 1 || m.pipelineTotalPage > 1 || m.issueTotalPage > 1 {
-		hints = append(hints, keyHint("n/p", "pages"))
+	if m.tab == tabProjects {
+		if m.projectTotalPage > 1 {
+			hints = append(hints, keyHint("PgUp/PgDn", "pages"))
+		}
+	} else {
+		if m.mrTotalPage > 1 || m.pipelineTotalPage > 1 || m.issueTotalPage > 1 {
+			hints = append(hints, keyHint("n/p", "pages"))
+		}
 	}
 
 	bar := strings.Join(hints, "  ")
@@ -1369,6 +1384,10 @@ func (m Model) viewFooter() string {
 	case tabIssues:
 		if m.issueTotalPage > 0 {
 			pageInfo = dimStyle.Render(fmt.Sprintf("  Page %d/%d", m.issuePage, m.issueTotalPage))
+		}
+	case tabProjects:
+		if m.projectTotalPage > 0 {
+			pageInfo = dimStyle.Render(fmt.Sprintf("  Page %d/%d", m.projectPage, m.projectTotalPage))
 		}
 	}
 
