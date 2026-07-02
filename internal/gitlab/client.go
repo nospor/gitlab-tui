@@ -25,20 +25,94 @@ type DiffFile struct {
 	Added     int
 	Deleted   int
 	Lines     []DiffLine
+	TooLarge  bool // diff was too large to return inline
+	Collapsed bool // diff was collapsed by GitLab
 }
 
 // GetMRDiffs fetches the list of changed files (with diff hunks) for an MR.
 func (c *Client) GetMRDiffs(projectID, mriid int) ([]*DiffFile, error) {
-	diffs, _, err := c.raw.MergeRequests.ListMergeRequestDiffs(projectID, int64(mriid), nil)
+	result, err := c.getMRChangesFallback(projectID, mriid)
+	if err == nil {
+		return result, nil
+	}
+
+	// If changes endpoint fails, try ListMergeRequestDiffs as a fallback
+	var fallbackResult []*DiffFile
+	page := int64(1)
+	for {
+		opts := &gl.ListMergeRequestDiffsOptions{
+			ListOptions: gl.ListOptions{
+				Page:    page,
+				PerPage: 100,
+			},
+		}
+		diffs, resp, err := c.raw.MergeRequests.ListMergeRequestDiffs(projectID, int64(mriid), opts)
+		if err != nil {
+			return nil, fmt.Errorf("listing MR diffs (page %d): %w", page, err)
+		}
+
+		for _, d := range diffs {
+			f := &DiffFile{
+				OldPath:   d.OldPath,
+				NewPath:   d.NewPath,
+				TooLarge:  d.TooLarge,
+				Collapsed: d.Collapsed,
+			}
+			lines := parseDiffLines(d.Diff)
+			for _, l := range lines {
+				if l.Type == "added" {
+					f.Added++
+				} else if l.Type == "removed" {
+					f.Deleted++
+				}
+			}
+			f.Lines = lines
+			fallbackResult = append(fallbackResult, f)
+		}
+
+		if resp.NextPage == 0 {
+			break
+		}
+		page = resp.NextPage
+	}
+	return fallbackResult, nil
+}
+
+type mrChangesResponse struct {
+	Changes []struct {
+		OldPath     string `json:"old_path"`
+		NewPath     string `json:"new_path"`
+		AMode       string `json:"a_mode"`
+		BMode       string `json:"b_mode"`
+		Diff        string `json:"diff"`
+		NewFile     bool   `json:"new_file"`
+		RenamedFile bool   `json:"renamed_file"`
+		DeletedFile bool   `json:"deleted_file"`
+		TooLarge    bool   `json:"too_large"`
+		Collapsed   bool   `json:"collapsed"`
+	} `json:"changes"`
+}
+
+func (c *Client) getMRChangesFallback(projectID, mriid int) ([]*DiffFile, error) {
+	path := fmt.Sprintf("projects/%d/merge_requests/%d/changes", projectID, mriid)
+	req, err := c.raw.NewRequest(http.MethodGet, path, nil, nil)
 	if err != nil {
-		return nil, fmt.Errorf("listing MR diffs: %w", err)
+		return nil, fmt.Errorf("creating raw request for fallback: %w", err)
+	}
+
+	var respObj mrChangesResponse
+	_, err = c.raw.Do(req, &respObj)
+	if err != nil {
+		return nil, fmt.Errorf("executing raw request for fallback: %w", err)
 	}
 
 	var result []*DiffFile
-	for _, d := range diffs {
+	for _, d := range respObj.Changes {
 		f := &DiffFile{
-			OldPath: d.OldPath,
-			NewPath: d.NewPath,
+			OldPath:   d.OldPath,
+			NewPath:   d.NewPath,
+			TooLarge:  d.TooLarge,
+			Collapsed: d.Collapsed,
 		}
 		lines := parseDiffLines(d.Diff)
 		for _, l := range lines {
@@ -53,6 +127,7 @@ func (c *Client) GetMRDiffs(projectID, mriid int) ([]*DiffFile, error) {
 	}
 	return result, nil
 }
+
 
 // parseDiffLines parses the raw unified diff string into DiffLine entries.
 func parseDiffLines(raw string) []DiffLine {

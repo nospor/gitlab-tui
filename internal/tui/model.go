@@ -1782,15 +1782,37 @@ func (m Model) viewMRDetailSplit(bodyH int) string {
 		leftW = 20
 	}
 
-	// Left: existing MR detail (narrower)
+	// Left: existing MR detail (narrower), clipped to bodyH lines to prevent terminal scrolling
 	leftContent := m.viewMRDetailForWidth(leftW)
-	left := lipgloss.NewStyle().Width(leftW).Render(leftContent)
+	leftLines := strings.Split(leftContent, "\n")
+
+	totalLines := len(leftLines)
+	maxScroll := totalLines - bodyH
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	offset := m.mrDetailScrollOffset
+	if offset > maxScroll {
+		offset = maxScroll
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	end := offset + bodyH
+	if end > totalLines {
+		end = totalLines
+	}
+
+	clippedLeftContent := strings.Join(leftLines[offset:end], "\n")
+	left := lipgloss.NewStyle().Width(leftW).Height(bodyH).MaxHeight(bodyH).Render(clippedLeftContent)
 
 	// Separator
 	sep := lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("│\n", bodyH))
 
 	// Right: diff panel
-	right := lipgloss.NewStyle().Width(rightW).Render(m.viewDiffPanel(rightW, bodyH))
+	rightContent := m.viewDiffPanel(rightW, bodyH)
+	right := lipgloss.NewStyle().Width(rightW).Height(bodyH).MaxHeight(bodyH).Render(rightContent)
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, sep, right)
 }
