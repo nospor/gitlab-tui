@@ -128,7 +128,10 @@ func matchRemote(remote string, cfg *Config) *DetectedProject {
 		if err != nil {
 			continue
 		}
+		// srvHost includes port if present (e.g. "gitlab.example.com:10443")
 		srvHost := strings.ToLower(strings.TrimRight(srvParsed.Host, "/"))
+		// srvHostname is just the hostname without port (for SSH remote matching)
+		srvHostname := strings.ToLower(srvParsed.Hostname())
 
 		var projectPath string
 
@@ -136,8 +139,8 @@ func matchRemote(remote string, cfg *Config) *DetectedProject {
 		// git@gitlab.com:group/project.git
 		// ssh://git@gitlab.com/group/project.git
 		if parsedURL != nil && parsedURL.Scheme == "ssh" {
-			host := strings.ToLower(parsedURL.Host)
-			if host == srvHost {
+			host := strings.ToLower(parsedURL.Hostname())
+			if host == srvHostname || host == srvHost {
 				projectPath = strings.TrimPrefix(strings.TrimSuffix(parsedURL.Path, ".git"), "/")
 			}
 		}
@@ -150,7 +153,8 @@ func matchRemote(remote string, cfg *Config) *DetectedProject {
 				if colonIdx >= 0 {
 					host := strings.ToLower(hostAndPath[:colonIdx])
 					path := strings.TrimSuffix(hostAndPath[colonIdx+1:], ".git")
-					if host == srvHost {
+					// Match against both "host:port" and just "host"
+					if host == srvHostname || host == srvHost {
 						projectPath = path
 					}
 				}
@@ -166,7 +170,7 @@ func matchRemote(remote string, cfg *Config) *DetectedProject {
 			if hi := strings.Index(host, "@"); hi >= 0 {
 				host = host[hi+1:]
 			}
-			if host == srvHost {
+			if host == srvHost || host == srvHostname {
 				projectPath = strings.TrimPrefix(strings.TrimSuffix(parsedURL.Path, ".git"), "/")
 			}
 		}
