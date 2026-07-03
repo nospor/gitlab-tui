@@ -236,7 +236,7 @@ func (c *Client) GetMRDiscussions(projectID, mriid int) ([]*MRDiscussion, error)
 		for _, n := range d.Notes {
 			note := &MRNote{
 				ID:     n.ID,
-				Body:   n.Body,
+				Body:   ConvertHTMLToMarkdown(n.Body),
 				System: n.System,
 			}
 			note.Author = n.Author.Username
