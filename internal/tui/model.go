@@ -2,6 +2,8 @@ package tui
 
 import (
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -849,9 +851,9 @@ func (m Model) diffPanelWidth() int {
 }
 
 func (m Model) diffPanelHeight() int {
-	header := m.viewHeader()
-	footer := m.viewDetailFooter()
-	bodyH := m.height - lipgloss.Height(header) - lipgloss.Height(footer) - 1
+	header := lipgloss.NewStyle().Width(m.width).MaxHeight(1).Render(m.viewHeader())
+	footer := lipgloss.NewStyle().Width(m.width).Render(m.viewDetailFooter())
+	bodyH := m.height - lipgloss.Height(header) - lipgloss.Height(footer) - m.getHeightOffset()
 	if bodyH < 1 {
 		bodyH = 1
 	}
@@ -969,6 +971,16 @@ func (m *Model) updateDiffScroll() {
 	if m.mrDiffScrollOffset < 0 {
 		m.mrDiffScrollOffset = 0
 	}
+}
+
+func (m Model) getHeightOffset() int {
+	offset := 1
+	if val := os.Getenv("GITLAB_TUI_HEIGHT_OFFSET"); val != "" {
+		if parsed, err := strconv.Atoi(val); err == nil {
+			offset = parsed
+		}
+	}
+	return offset
 }
 
 // ─── Cursor helpers ───────────────────────────────────────────────────────────
@@ -1494,12 +1506,12 @@ func (m Model) viewError() string {
 // ─── Main view ────────────────────────────────────────────────────────────────
 
 func (m Model) viewMain() string {
-	header := m.viewHeader()
-	tabs := m.viewTabs()
+	header := lipgloss.NewStyle().Width(m.width).MaxHeight(1).Render(m.viewHeader())
+	tabs := lipgloss.NewStyle().Width(m.width).MaxHeight(2).Render(m.viewTabs())
 	body := m.viewBody()
-	footer := m.viewFooter()
+	footer := lipgloss.NewStyle().Width(m.width).Render(m.viewFooter())
 
-	bodyHeight := m.height - lipgloss.Height(header) - lipgloss.Height(tabs) - lipgloss.Height(footer) - 2
+	bodyHeight := m.height - lipgloss.Height(header) - lipgloss.Height(tabs) - lipgloss.Height(footer) - m.getHeightOffset() - 1
 	if bodyHeight < 1 {
 		bodyHeight = 1
 	}
@@ -1507,6 +1519,7 @@ func (m Model) viewMain() string {
 	bodyPanel := lipgloss.NewStyle().
 		Width(m.width).
 		Height(bodyHeight).
+		MaxHeight(bodyHeight).
 		Render(body)
 
 	if m.doneMsg != "" {
@@ -1536,7 +1549,7 @@ func (m Model) viewHeader() string {
 	}
 
 	right := lipgloss.JoinHorizontal(lipgloss.Center,
-		dimStyle.Render(serverName+" · "),
+		dimStyle.Render(fmt.Sprintf("%s · %dx%d · ", serverName, m.width, m.height)),
 		accentStyle.Render(projectName),
 		dimStyle.Render("  @"+m.username),
 	)
@@ -1747,10 +1760,10 @@ func (m Model) viewProjectList() string {
 // ─── Detail views ─────────────────────────────────────────────────────────────
 
 func (m Model) viewDetail() string {
-	header := m.viewHeader()
-	footer := m.viewDetailFooter()
+	header := lipgloss.NewStyle().Width(m.width).MaxHeight(1).Render(m.viewHeader())
+	footer := lipgloss.NewStyle().Width(m.width).Render(m.viewDetailFooter())
 
-	bodyH := m.height - lipgloss.Height(header) - lipgloss.Height(footer) - 1
+	bodyH := m.height - lipgloss.Height(header) - lipgloss.Height(footer) - m.getHeightOffset()
 	if bodyH < 1 {
 		bodyH = 1
 	}
@@ -1769,7 +1782,7 @@ func (m Model) viewDetail() string {
 		body = m.viewIssueDetail()
 	}
 
-	bodyPanel := lipgloss.NewStyle().Width(m.width).Height(bodyH).Render(body)
+	bodyPanel := lipgloss.NewStyle().Width(m.width).Height(bodyH).MaxHeight(bodyH).Render(body)
 	return lipgloss.JoinVertical(lipgloss.Left, header, bodyPanel, footer)
 }
 
@@ -1808,7 +1821,11 @@ func (m Model) viewMRDetailSplit(bodyH int) string {
 	left := lipgloss.NewStyle().Width(leftW).Height(bodyH).MaxHeight(bodyH).Render(clippedLeftContent)
 
 	// Separator
-	sep := lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("│\n", bodyH))
+	sepContent := strings.Repeat("│\n", bodyH)
+	if bodyH > 0 {
+		sepContent = sepContent[:len(sepContent)-1]
+	}
+	sep := lipgloss.NewStyle().Foreground(colorBorder).Render(sepContent)
 
 	// Right: diff panel
 	rightContent := m.viewDiffPanel(rightW, bodyH)

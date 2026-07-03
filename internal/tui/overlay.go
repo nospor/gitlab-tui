@@ -147,5 +147,9 @@ func overlay(background, foreground string, width, height, startX, startY int) s
 		}
 	}
 
+	if len(bgLines) > height {
+		bgLines = bgLines[:height]
+	}
+
 	return strings.Join(bgLines, "\n")
 }
