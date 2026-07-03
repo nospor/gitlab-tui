@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -139,7 +140,7 @@ type Model struct {
 	mrDiffPanelOpen    bool   // whether the diff panel is shown
 
 	// Comment composer
-	commentInput    textinput.Model
+	commentInput    textarea.Model
 	commentMode     commentMode
 	commentInlineFile *gitlab.DiffFile  // target file for inline comment
 	commentInlineLine gitlab.DiffLine   // target line for inline comment
@@ -192,9 +193,26 @@ func New(cfg *config.Config, serverIdx int, client *gitlab.Client, project *gitl
 	ti.Placeholder = "Search projects..."
 	ti.CharLimit = 100
 
-	ci := textinput.New()
+	ci := textarea.New()
 	ci.Placeholder = "Type your comment..."
+	ci.SetWidth(58)
+	ci.SetHeight(6)
 	ci.CharLimit = 2000
+	ci.Prompt = ""
+	ci.ShowLineNumbers = false
+
+	// Set background colors to match the panel background to prevent transparency
+	ci.FocusedStyle.Base = ci.FocusedStyle.Base.Background(colorBgPanel)
+	ci.FocusedStyle.Text = ci.FocusedStyle.Text.Background(colorBgPanel)
+	ci.FocusedStyle.Placeholder = ci.FocusedStyle.Placeholder.Background(colorBgPanel)
+	ci.FocusedStyle.CursorLine = ci.FocusedStyle.CursorLine.Background(colorBgPanel)
+	ci.FocusedStyle.EndOfBuffer = ci.FocusedStyle.EndOfBuffer.Background(colorBgPanel)
+
+	ci.BlurredStyle.Base = ci.BlurredStyle.Base.Background(colorBgPanel)
+	ci.BlurredStyle.Text = ci.BlurredStyle.Text.Background(colorBgPanel)
+	ci.BlurredStyle.Placeholder = ci.BlurredStyle.Placeholder.Background(colorBgPanel)
+	ci.BlurredStyle.CursorLine = ci.BlurredStyle.CursorLine.Background(colorBgPanel)
+	ci.BlurredStyle.EndOfBuffer = ci.BlurredStyle.EndOfBuffer.Background(colorBgPanel)
 
 	m := Model{
 		cfg:          cfg,
@@ -611,10 +629,10 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 				m.commentInlineLine = l
 				m.commentMode = commentModeInline
 				m.commentInput.SetValue("")
-				m.commentInput.Focus()
+				cmd := m.commentInput.Focus()
 				m.prevState = m.state
 				m.state = stateComment
-				return m, nil
+				return m, cmd
 			case "r":
 				// Reply to inline comment on current line
 				if len(m.mrDiffFiles) == 0 {
@@ -632,10 +650,10 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 				m.commentReplyDiscussionID = discs[0].ID
 				m.commentMode = commentModeReply
 				m.commentInput.SetValue("")
-				m.commentInput.Focus()
+				cmd := m.commentInput.Focus()
 				m.prevState = m.state
 				m.state = stateComment
-				return m, nil
+				return m, cmd
 			}
 		}
 		switch key {
@@ -655,10 +673,10 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 			// General comment on MR
 			m.commentMode = commentModeGeneral
 			m.commentInput.SetValue("")
-			m.commentInput.Focus()
+			cmd := m.commentInput.Focus()
 			m.prevState = m.state
 			m.state = stateComment
-			return m, nil
+			return m, cmd
 		case "a":
 			return m.promptConfirm("Approve MR", fmt.Sprintf("Approve MR !%d: %s?", m.mrDetail.IID, m.mrDetail.Title),
 				m.cmdApproveMR(m.mrDetail.IID))
@@ -711,6 +729,9 @@ func (m Model) handleCommentKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.commentInput.Blur()
 		m.state = m.prevState
+		return m, nil
+	case "alt+enter":
+		m.commentInput.InsertRune('\n')
 		return m, nil
 	case "ctrl+s", "enter":
 		body := strings.TrimSpace(m.commentInput.Value())
@@ -2321,6 +2342,7 @@ func (m Model) viewCommentComposer() string {
 	inputBox := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(colorAccent).
+		Background(colorBgPanel).
 		Padding(0, 1).
 		Width(60).
 		Render(m.commentInput.View())
@@ -2332,7 +2354,7 @@ func (m Model) viewCommentComposer() string {
 			"",
 			inputBox,
 			"",
-			dimStyle.Render(keyHint("Enter", "submit")+"  "+keyHint("Esc", "cancel")),
+			dimStyle.Render(keyHint("Enter", "submit")+"  "+keyHint("Alt+Enter", "new line")+"  "+keyHint("Esc", "cancel")),
 		),
 	)
 

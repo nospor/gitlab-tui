@@ -119,10 +119,14 @@ func overlayLines(bgLine, fgLine string, startX, width int) string {
 			break
 		}
 		if col >= 0 {
-			bgGrid[col] = gridCell{r: cell.r, style: cell.style}
+			style := cell.style
+			if !styleHasBackground(style) {
+				style = style + "\x1b[48;2;22;27;34m"
+			}
+			bgGrid[col] = gridCell{r: cell.r, style: style}
 			for w := 1; w < cell.width; w++ {
 				if col+w < width && col+w >= 0 {
-					bgGrid[col+w] = gridCell{r: ' ', style: cell.style, isCont: true}
+					bgGrid[col+w] = gridCell{r: ' ', style: style, isCont: true}
 				}
 			}
 		}
@@ -130,6 +134,92 @@ func overlayLines(bgLine, fgLine string, startX, width int) string {
 	}
 
 	return gridToLine(bgGrid)
+}
+
+func styleHasBackground(style string) bool {
+	hasBg := false
+	i := 0
+	n := len(style)
+	for i < n {
+		if i+1 < n && style[i] == '\x1b' && style[i+1] == '[' {
+			i += 2
+			start := i
+			for i < n {
+				c := style[i]
+				if c == 'm' {
+					break
+				}
+				if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
+					break
+				}
+				i++
+			}
+			seqContent := style[start:i]
+			if i < n && style[i] == 'm' {
+				i++
+			}
+			
+			if seqContent == "" || seqContent == "0" {
+				hasBg = false
+				continue
+			}
+			
+			params := strings.Split(seqContent, ";")
+			pIdx := 0
+			for pIdx < len(params) {
+				param := params[pIdx]
+				if param == "0" {
+					hasBg = false
+					pIdx++
+				} else if param == "38" {
+					if pIdx+1 < len(params) {
+						subType := params[pIdx+1]
+						if subType == "5" {
+							pIdx += 3
+						} else if subType == "2" {
+							pIdx += 5
+						} else {
+							pIdx++
+						}
+					} else {
+						pIdx++
+					}
+				} else if param == "48" {
+					hasBg = true
+					if pIdx+1 < len(params) {
+						subType := params[pIdx+1]
+						if subType == "5" {
+							pIdx += 3
+						} else if subType == "2" {
+							pIdx += 5
+						} else {
+							pIdx++
+						}
+					} else {
+						pIdx++
+					}
+				} else {
+					val := 0
+					for k := 0; k < len(param); k++ {
+						if param[k] >= '0' && param[k] <= '9' {
+							val = val*10 + int(param[k]-'0')
+						} else {
+							break
+						}
+					}
+					if (val >= 40 && val <= 47) || (val >= 100 && val <= 107) {
+						hasBg = true
+					} else if val == 49 {
+						hasBg = false
+					}
+					pIdx++
+				}
+			}
+		} else {
+			i++
+		}
+	}
+	return hasBg
 }
 
 func overlay(background, foreground string, width, height, startX, startY int) string {
