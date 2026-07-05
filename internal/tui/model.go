@@ -370,6 +370,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.reloadCurrent()
 
+	case youtrackTuiFinishedMsg:
+		return m, tea.ClearScreen
+
 	case tea.KeyMsg:
 		// Comment input captures all keys
 		if m.state == stateComment {
@@ -848,11 +851,13 @@ func (m Model) handleLinkSelectKey(key string) (tea.Model, tea.Cmd) {
 			m.linkCursor--
 		}
 	case "enter":
+		var cmd tea.Cmd
 		if m.linkCursor >= 0 && m.linkCursor < len(m.linkItems) {
-			m.openURL(m.linkItems[m.linkCursor].URL)
+			cmd = m.openURL(m.linkItems[m.linkCursor].URL)
 		}
 		m.state = m.prevState
 		m.linkItems = nil
+		return m, cmd
 	case "esc":
 		m.state = m.prevState
 		m.linkItems = nil
@@ -2609,13 +2614,26 @@ func truncate(s string, n int) string {
 	return s[:n-1] + "…"
 }
 
-// openURL opens a URL in the user's preferred browser.
-func (m Model) openURL(url string) {
+type youtrackTuiFinishedMsg struct {
+	Err error
+}
+
+// openURL opens a URL in the user's preferred browser or returns a command to execute
+// an interactive YouTrack command.
+func (m Model) openURL(url string) tea.Cmd {
+	if m.cfg.YouTrackCommand != "" && m.cfg.IsYouTrackURL(url) {
+		c := exec.Command(m.cfg.YouTrackCommand, url)
+		return tea.ExecProcess(c, func(err error) tea.Msg {
+			return youtrackTuiFinishedMsg{Err: err}
+		})
+	}
+
 	cmd := m.cfg.BrowserCommand
 	if cmd == "" {
 		cmd = "xdg-open"
 	}
 	exec.Command(cmd, url).Start()
+	return nil
 }
 
 // urlRe matches http:// and https:// URLs.

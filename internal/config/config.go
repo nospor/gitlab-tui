@@ -32,6 +32,7 @@ type Config struct {
 	Servers         []Server         `json:"servers"`
 	YouTrackServers []YouTrackServer `json:"youtrack_servers,omitempty"`
 	BrowserCommand  string           `json:"browser_command,omitempty"`
+	YouTrackCommand string           `json:"youtrack_command,omitempty"`
 }
 
 // ConfigPath returns the path to the config file.
@@ -333,6 +334,21 @@ func (c *Config) GetYouTrackURL(issueKey string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// IsYouTrackURL checks if the given URL belongs to any configured YouTrack server.
+func (c *Config) IsYouTrackURL(rawURL string) bool {
+	if c == nil {
+		return false
+	}
+	rawURL = strings.ToLower(rawURL)
+	for _, srv := range c.YouTrackServers {
+		srvURL := strings.ToLower(strings.TrimRight(srv.URL, "/"))
+		if srvURL != "" && (strings.HasPrefix(rawURL, srvURL+"/") || rawURL == srvURL) {
+			return true
+		}
+	}
+	return false
 }
 
 

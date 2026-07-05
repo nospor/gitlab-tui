@@ -174,3 +174,72 @@ func TestGetYouTrackURL(t *testing.T) {
 	}
 }
 
+func TestIsYouTrackURL(t *testing.T) {
+	cfg := &Config{
+		YouTrackServers: []YouTrackServer{
+			{
+				Name:     "Mediatel YouTrack",
+				URL:      "https://youtrack.mediatel.co.uk/",
+				Projects: []string{"MTEL", "BARB"},
+			},
+			{
+				Name:     "Other YouTrack",
+				URL:      "http://youtrack.other.org",
+				Projects: []string{"FOO", "BAR"},
+			},
+		},
+	}
+
+	tests := []struct {
+		name     string
+		url      string
+		expected bool
+	}{
+		{
+			name:     "Match exact base URL with trailing slash",
+			url:      "https://youtrack.mediatel.co.uk/",
+			expected: true,
+		},
+		{
+			name:     "Match issue URL under base with trailing slash",
+			url:      "https://youtrack.mediatel.co.uk/issue/MTEL-22122",
+			expected: true,
+		},
+		{
+			name:     "Match issue URL under base without trailing slash",
+			url:      "http://youtrack.other.org/issue/FOO-99",
+			expected: true,
+		},
+		{
+			name:     "Match exact base URL without trailing slash",
+			url:      "http://youtrack.other.org",
+			expected: true,
+		},
+		{
+			name:     "Case insensitive matching",
+			url:      "HTTPS://YOUTRACK.MEDIATEL.CO.UK/issue/MTEL-22122",
+			expected: true,
+		},
+		{
+			name:     "No match different host",
+			url:      "https://gitlab.com/group/project",
+			expected: false,
+		},
+		{
+			name:     "No match partial domain name",
+			url:      "https://youtrack.mediatel.co.uk.attacker.com/issue/MTEL-22122",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := cfg.IsYouTrackURL(tt.url)
+			if got != tt.expected {
+				t.Errorf("IsYouTrackURL(%q) = %v, want %v", tt.url, got, tt.expected)
+			}
+		})
+	}
+}
+
+
