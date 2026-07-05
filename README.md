@@ -12,6 +12,7 @@ Built with [BubbleTea](https://github.com/charmbracelet/bubbletea) and the offic
 - 📁 **Projects** — browse and switch projects on the current server
 - 🔌 **Multiple servers** — configure several GitLab instances, switch between them
 - 🧠 **Auto-detection** — detects server and project from the current directory's `git remote`
+- 🔗 **Open links** — press `o` on MR, pipeline, or issue detail to see all links (WebURL, links in descriptions and comments) and open them in your browser
 
 ## Installation
 
@@ -50,9 +51,15 @@ Edit it to add your servers:
       "url": "https://gitlab.company.com",
       "token": "glpat-xxxxxxxxxxxxxxxxxxxx"
     }
-  ]
+  ],
+  "browser_command": "xdg-open"
 }
 ```
+
+| Option            | Default      | Description                                                                                                                              |
+| ----------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `servers`         | —            | List of GitLab server configurations                                                                                                     |
+| `browser_command` | `"xdg-open"` | Command to open URLs (e.g. `"firefox"`, `"google-chrome"`, `"brave-browser"`). Leave as `"xdg-open"` to use your system default browser. |
 
 You need a **Personal Access Token** with at least `api` scope. Create one at:
 `https://gitlab.com/-/user_settings/personal_access_tokens`
@@ -69,37 +76,50 @@ Both SSH and HTTPS remotes are supported:
 
 ### Main view
 
-| Key | Action |
-|-----|--------|
-| `Tab` / `→` | Next tab |
-| `Shift+Tab` / `←` | Previous tab |
-| `1–4` | Jump to tab (MRs, Pipelines, Issues, Projects) |
-| `j` / `↓` | Move down |
-| `k` / `↑` | Move up |
-| `Enter` | Open detail / select project |
-| `s` | Cycle MR state filter (open→merged→closed→all) |
-| `r` | Refresh current tab |
-| `n` / `p` | Next / previous page |
-| `P` | Switch project |
-| `S` | Switch server |
-| `q` / `Ctrl+C` | Quit |
+| Key               | Action                                         |
+| ----------------- | ---------------------------------------------- |
+| `Tab` / `→`       | Next tab                                       |
+| `Shift+Tab` / `←` | Previous tab                                   |
+| `1–4`             | Jump to tab (MRs, Pipelines, Issues, Projects) |
+| `j` / `↓`         | Move down                                      |
+| `k` / `↑`         | Move up                                        |
+| `Enter`           | Open detail / select project                   |
+| `s`               | Cycle MR state filter (open→merged→closed→all) |
+| `r`               | Refresh current tab                            |
+| `n` / `p`         | Next / previous page                           |
+| `P`               | Switch project                                 |
+| `S`               | Switch server                                  |
+| `q` / `Ctrl+C`    | Quit                                           |
 
 ### MR detail
 
-| Key | Action |
-|-----|--------|
-| `a` | Approve MR |
-| `m` | Merge MR |
-| `c` | Close MR |
-| `Esc` | Back to list |
+| Key       | Action               |
+| --------- | -------------------- |
+| `j` / `k` | Scroll detail        |
+| `Tab`     | Toggle changes panel |
+| `C`       | Comment              |
+| `a`       | Approve MR           |
+| `m`       | Merge MR             |
+| `x`       | Close MR             |
+| `+` / `-` | Vote up / down       |
+| `o`       | Open link selector   |
+| `Esc`     | Back to list         |
 
 ### Pipeline detail
 
-| Key | Action |
-|-----|--------|
-| `r` | Retry pipeline |
-| `c` | Cancel pipeline |
-| `Esc` | Back to list |
+| Key   | Action             |
+| ----- | ------------------ |
+| `r`   | Retry pipeline     |
+| `c`   | Cancel pipeline    |
+| `o`   | Open link selector |
+| `Esc` | Back to list       |
+
+### Issue detail
+
+| Key   | Action             |
+| ----- | ------------------ |
+| `o`   | Open link selector |
+| `Esc` | Back to list       |
 
 ## Project structure
 

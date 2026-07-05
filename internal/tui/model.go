@@ -3,6 +3,8 @@ package tui
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -56,6 +58,7 @@ const (
 	stateServerSelect
 	stateConfirm
 	stateComment
+	stateLinkSelect
 )
 
 // ─── Messages ─────────────────────────────────────────────────────────────────
@@ -95,6 +98,13 @@ type (
 type confirmAction struct {
 	label   string
 	perform tea.Cmd
+}
+
+// ─── Link selection ────────────────────────────────────────────────────────────
+
+type linkItem struct {
+	Label string
+	URL   string
 }
 
 // ─── Root model ───────────────────────────────────────────────────────────────
@@ -145,6 +155,10 @@ type Model struct {
 	commentInlineFile *gitlab.DiffFile  // target file for inline comment
 	commentInlineLine gitlab.DiffLine   // target line for inline comment
 	commentReplyDiscussionID string     // target discussion ID for replies
+
+	// Link selection
+	linkItems  []linkItem
+	linkCursor int
 
 	// Pipeline view
 	pipelines       []*gitlab.PipelineInfo
@@ -452,6 +466,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case stateConfirm:
 			m.state = m.prevState
 			m.confirm = nil
+		case stateLinkSelect:
+			m.state = m.prevState
+			m.linkItems = nil
 		case stateError:
 			if m.prevState == stateLoading || m.prevState == stateError {
 				m.state = stateMain
@@ -469,6 +486,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleDetailKey(key)
 	case stateServerSelect:
 		return m.handleServerSelectKey(key)
+	case stateLinkSelect:
+		return m.handleLinkSelectKey(key)
 	case stateConfirm:
 		return m.handleConfirmKey(key)
 	case stateError:
@@ -700,6 +719,13 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 			m.prevState = stateDetail
 			m.loadMsg = "Voting..."
 			return m, m.cmdVoteDownMR(m.mrDetail.IID)
+		case "o":
+			m.linkItems = m.collectLinksForDetail()
+			if len(m.linkItems) > 0 {
+				m.linkCursor = 0
+				m.prevState = m.state
+				m.state = stateLinkSelect
+			}
 		}
 	case tabPipelines:
 		if m.pipelineDetail == nil {
@@ -713,6 +739,26 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 			if m.pipelineDetail.Status == "running" || m.pipelineDetail.Status == "pending" {
 				return m.promptConfirm("Cancel Pipeline", fmt.Sprintf("Cancel pipeline #%d?", m.pipelineDetail.ID),
 					m.cmdCancelPipeline(m.pipelineDetail.ID))
+			}
+		case "o":
+			m.linkItems = m.collectLinksForDetail()
+			if len(m.linkItems) > 0 {
+				m.linkCursor = 0
+				m.prevState = m.state
+				m.state = stateLinkSelect
+			}
+		}
+	case tabIssues:
+		if m.issueDetail == nil {
+			return m, nil
+		}
+		switch key {
+		case "o":
+			m.linkItems = m.collectLinksForDetail()
+			if len(m.linkItems) > 0 {
+				m.linkCursor = 0
+				m.prevState = m.state
+				m.state = stateLinkSelect
 			}
 		}
 	}
@@ -785,6 +831,31 @@ func (m Model) handleServerSelectKey(key string) (tea.Model, tea.Cmd) {
 		m.projectSearch.SetValue("")
 		m.projectSearch.Focus()
 		return m, m.cmdLoadProjects()
+	}
+	return m, nil
+}
+
+// ─── Link select key handler ──────────────────────────────────────────────────
+
+func (m Model) handleLinkSelectKey(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "j", "down":
+		if m.linkCursor < len(m.linkItems)-1 {
+			m.linkCursor++
+		}
+	case "k", "up":
+		if m.linkCursor > 0 {
+			m.linkCursor--
+		}
+	case "enter":
+		if m.linkCursor >= 0 && m.linkCursor < len(m.linkItems) {
+			m.openURL(m.linkItems[m.linkCursor].URL)
+		}
+		m.state = m.prevState
+		m.linkItems = nil
+	case "esc":
+		m.state = m.prevState
+		m.linkItems = nil
 	}
 	return m, nil
 }
@@ -1442,6 +1513,8 @@ func (m Model) View() string {
 		return m.viewError()
 	case stateServerSelect:
 		return m.viewServerSelect()
+	case stateLinkSelect:
+		return m.viewLinkSelect()
 	case stateConfirm:
 		return m.viewConfirm()
 	case stateComment:
@@ -2313,6 +2386,31 @@ func (m Model) viewServerSelect() string {
 
 
 
+// ─── Link select overlay ──────────────────────────────────────────────────────
+
+func (m Model) viewLinkSelect() string {
+	var rows []string
+	rows = append(rows, subtitleStyle.Render("Open Link"), "")
+	for i, item := range m.linkItems {
+		line := fmt.Sprintf("%s  %s", item.Label, dimStyle.Render(truncate(item.URL, 80)))
+		if i == m.linkCursor {
+			rows = append(rows, selectedStyle.Render("▶ "+line))
+		} else {
+			rows = append(rows, normalItemStyle.Render("  "+line))
+		}
+	}
+	rows = append(rows, "", dimStyle.Render("↑↓ navigate  Enter open  Esc cancel"))
+
+	box := panelStyle.Padding(1, 3).Render(strings.Join(rows, "\n"))
+
+	bg := m.viewBackground()
+	dlgWidth := lipgloss.Width(box)
+	dlgHeight := lipgloss.Height(box)
+	startX := (m.width - dlgWidth) / 2
+	startY := (m.height - dlgHeight) / 2
+	return overlay(bg, box, m.width, m.height, startX, startY)
+}
+
 // ─── Comment composer overlay ─────────────────────────────────────────────────
 
 func (m Model) viewCommentComposer() string {
@@ -2471,6 +2569,7 @@ func (m Model) viewDetailFooter() string {
 				keyHint("x", "close"),
 				keyHint("+", "vote up"),
 				keyHint("-", "vote down"),
+				keyHint("o", "open link"),
 				keyHint("Esc", "back"),
 				keyHint("q", "quit"),
 			}
@@ -2479,6 +2578,13 @@ func (m Model) viewDetailFooter() string {
 		hints = []string{
 			keyHint("r", "retry"),
 			keyHint("c", "cancel"),
+			keyHint("o", "open link"),
+			keyHint("Esc", "back"),
+			keyHint("q", "quit"),
+		}
+	case tabIssues:
+		hints = []string{
+			keyHint("o", "open link"),
 			keyHint("Esc", "back"),
 			keyHint("q", "quit"),
 		}
@@ -2501,6 +2607,81 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n-1] + "…"
+}
+
+// openURL opens a URL in the user's preferred browser.
+func (m Model) openURL(url string) {
+	cmd := m.cfg.BrowserCommand
+	if cmd == "" {
+		cmd = "xdg-open"
+	}
+	exec.Command(cmd, url).Start()
+}
+
+// urlRe matches http:// and https:// URLs.
+var urlRe = regexp.MustCompile(`https?://[^\s<>"']+`)
+
+// extractURLs finds all unique URLs in a block of text.
+func extractURLs(text string) []string {
+	seen := map[string]bool{}
+	var urls []string
+	for _, m := range urlRe.FindAllString(text, -1) {
+		// Strip trailing punctuation that's likely not part of the URL
+		m = strings.TrimRight(m, ".,;:!?)]}>")
+		if !seen[m] {
+			seen[m] = true
+			urls = append(urls, m)
+		}
+	}
+	return urls
+}
+
+// collectLinksForDetail returns the linkItems for the current detail view.
+func (m Model) collectLinksForDetail() []linkItem {
+	var items []linkItem
+	seen := map[string]bool{}
+
+	add := func(label, rawURL string) {
+		u := strings.TrimRight(rawURL, ".,;:!?)]}>")
+		if seen[u] {
+			return
+		}
+		seen[u] = true
+		items = append(items, linkItem{Label: label, URL: u})
+	}
+
+	switch m.tab {
+	case tabMRs:
+		if m.mrDetail == nil {
+			return nil
+		}
+		add("🔗 MR on GitLab", m.mrDetail.WebURL)
+		for _, u := range extractURLs(m.mrDetail.Description) {
+			add("📎 "+u, u)
+		}
+		for _, d := range m.mrDiscussions {
+			for _, n := range d.Notes {
+				for _, u := range extractURLs(n.Body) {
+					add("💬 "+u, u)
+				}
+			}
+		}
+	case tabPipelines:
+		if m.pipelineDetail == nil {
+			return nil
+		}
+		add("🔗 Pipeline on GitLab", m.pipelineDetail.WebURL)
+	case tabIssues:
+		if m.issueDetail == nil {
+			return nil
+		}
+		add("🔗 Issue on GitLab", m.issueDetail.WebURL)
+		for _, u := range extractURLs(m.issueDetail.Description) {
+			add("📎 "+u, u)
+		}
+	}
+
+	return items
 }
 
 func truncateLines(s string, maxLines, maxWidth int) string {

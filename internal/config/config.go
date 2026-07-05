@@ -22,7 +22,8 @@ type Server struct {
 
 // Config is the top-level configuration structure.
 type Config struct {
-	Servers []Server `json:"servers"`
+	Servers        []Server `json:"servers"`
+	BrowserCommand string   `json:"browser_command,omitempty"`
 }
 
 // ConfigPath returns the path to the config file.
@@ -31,7 +32,10 @@ func ConfigPath() string {
 	return filepath.Join(home, ".config", "gitlab-tui", "config.json")
 }
 
-// Load reads config from disk. Creates a default if not present.
+// defaultBrowserCommand is the fallback command for opening URLs.
+const defaultBrowserCommand = "xdg-open"
+
+// Load reads config from disk. Returns an empty config if the file doesn't exist.
 func Load() (*Config, error) {
 	path := ConfigPath()
 
@@ -47,6 +51,15 @@ func Load() (*Config, error) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
+
+	// Fill in defaults and persist so the user can see available options.
+	if cfg.BrowserCommand == "" {
+		cfg.BrowserCommand = defaultBrowserCommand
+		if err := Save(&cfg); err != nil {
+			return nil, fmt.Errorf("saving defaults: %w", err)
+		}
+	}
+
 	return &cfg, nil
 }
 
@@ -79,6 +92,7 @@ func EnsureDefaultConfig() error {
 				Default: true,
 			},
 		},
+		BrowserCommand: defaultBrowserCommand,
 	}
 	return Save(&sample)
 }
