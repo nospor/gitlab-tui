@@ -13,6 +13,7 @@ Built with [BubbleTea](https://github.com/charmbracelet/bubbletea) and the offic
 - 🔌 **Multiple servers** — configure several GitLab instances, switch between them
 - 🧠 **Auto-detection** — detects server and project from the current directory's `git remote`
 - 🔗 **Open links** — press `o` on MR, pipeline, or issue detail to see all links (WebURL, links in descriptions and comments) and open them in your browser
+- 🎫 **YouTrack integration** — automatically parses issue tracker keys (like `PROJ-XXXX`) in descriptions and comments, resolving them to YouTrack URLs inside the link selection menu
 
 ## Installation
 
@@ -52,14 +53,22 @@ Edit it to add your servers:
       "token": "glpat-xxxxxxxxxxxxxxxxxxxx"
     }
   ],
+  "youtrack_servers": [
+    {
+      "name": "company-youtrack",
+      "url": "https://youtrack.company.com",
+      "projects": ["PROJ1", "PROJ2"]
+    }
+  ],
   "browser_command": "xdg-open"
 }
 ```
 
-| Option            | Default      | Description                                                                                                                              |
-| ----------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `servers`         | —            | List of GitLab server configurations                                                                                                     |
-| `browser_command` | `"xdg-open"` | Command to open URLs (e.g. `"firefox"`, `"google-chrome"`, `"brave-browser"`). Leave as `"xdg-open"` to use your system default browser. |
+| Option             | Default      | Description                                                                                                                              |
+| ------------------ | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `servers`          | —            | List of GitLab server configurations                                                                                                     |
+| `youtrack_servers` | —            | List of YouTrack server configurations to resolve ticket keys to URLs (each server has `name`, `url`, and a list of `projects`)            |
+| `browser_command`  | `"xdg-open"` | Command to open URLs (e.g. `"firefox"`, `"google-chrome"`, `"brave-browser"`). Leave as `"xdg-open"` to use your system default browser. |
 
 You need a **Personal Access Token** with at least `api` scope. Create one at:
 `https://gitlab.com/-/user_settings/personal_access_tokens`

@@ -20,10 +20,18 @@ type Server struct {
 	Default bool   `json:"default,omitempty"`
 }
 
+// YouTrackServer represents a configured YouTrack server entry.
+type YouTrackServer struct {
+	Name     string   `json:"name"`
+	URL      string   `json:"url"`
+	Projects []string `json:"projects"`
+}
+
 // Config is the top-level configuration structure.
 type Config struct {
-	Servers        []Server `json:"servers"`
-	BrowserCommand string   `json:"browser_command,omitempty"`
+	Servers         []Server         `json:"servers"`
+	YouTrackServers []YouTrackServer `json:"youtrack_servers,omitempty"`
+	BrowserCommand  string           `json:"browser_command,omitempty"`
 }
 
 // ConfigPath returns the path to the config file.
@@ -292,4 +300,39 @@ func ParseGitLabMRURL(cfg *Config, rawURL string) (int, string, int, error) {
 
 	return serverIdx, projectPath, mrIID, nil
 }
+
+// GetYouTrackURL checks if a project key is configured for a YouTrack server,
+// and if so, returns the built issue URL (e.g. https://youtrack.example.com/issue/PROJ-123).
+func (c *Config) GetYouTrackURL(issueKey string) (string, bool) {
+	if c == nil {
+		return "", false
+	}
+	parts := strings.Split(issueKey, "-")
+	if len(parts) != 2 {
+		return "", false
+	}
+	proj := strings.ToUpper(parts[0])
+	num := parts[1]
+
+	// Verify that num is non-empty and consists only of digits
+	if len(num) == 0 {
+		return "", false
+	}
+	for _, char := range num {
+		if char < '0' || char > '9' {
+			return "", false
+		}
+	}
+
+	for _, srv := range c.YouTrackServers {
+		for _, p := range srv.Projects {
+			if strings.ToUpper(p) == proj {
+				serverURL := strings.TrimRight(srv.URL, "/")
+				return fmt.Sprintf("%s/issue/%s-%s", serverURL, proj, num), true
+			}
+		}
+	}
+	return "", false
+}
+
 

@@ -1,0 +1,63 @@
+package tui
+
+import (
+	"reflect"
+	"testing"
+
+	"gitlab-tui/internal/config"
+)
+
+func TestExtractYouTrackLinks(t *testing.T) {
+	cfg := &config.Config{
+		YouTrackServers: []config.YouTrackServer{
+			{
+				Name:     "Mediatel YouTrack",
+				URL:      "https://youtrack.mediatel.co.uk/",
+				Projects: []string{"MTEL", "BARB"},
+			},
+		},
+	}
+
+	tests := []struct {
+		name     string
+		text     string
+		expected []youTrackLink
+	}{
+		{
+			name: "single match",
+			text: "Closes MTEL-22122 in description",
+			expected: []youTrackLink{
+				{Key: "MTEL-22122", URL: "https://youtrack.mediatel.co.uk/issue/MTEL-22122"},
+			},
+		},
+		{
+			name: "multiple matches and duplicates",
+			text: "Fixes barb-123 and also BARB-123. Note that MTEL-99 is related.",
+			expected: []youTrackLink{
+				{Key: "BARB-123", URL: "https://youtrack.mediatel.co.uk/issue/BARB-123"},
+				{Key: "MTEL-99", URL: "https://youtrack.mediatel.co.uk/issue/MTEL-99"},
+			},
+		},
+		{
+			name:     "no config",
+			text:     "MTEL-123 is here but cfg is nil",
+			expected: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var testCfg *config.Config
+			if tt.name != "no config" {
+				testCfg = cfg
+			}
+			got := extractYouTrackLinks(tt.text, testCfg)
+			if len(got) == 0 && len(tt.expected) == 0 {
+				return
+			}
+			if !reflect.DeepEqual(got, tt.expected) {
+				t.Errorf("extractYouTrackLinks() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}

@@ -94,3 +94,83 @@ func TestParseGitLabMRURL(t *testing.T) {
 		})
 	}
 }
+
+func TestGetYouTrackURL(t *testing.T) {
+	cfg := &Config{
+		YouTrackServers: []YouTrackServer{
+			{
+				Name:     "Mediatel YouTrack",
+				URL:      "https://youtrack.mediatel.co.uk/",
+				Projects: []string{"MTEL", "BARB"},
+			},
+			{
+				Name:     "Other YouTrack",
+				URL:      "http://youtrack.other.org",
+				Projects: []string{"FOO", "BAR"},
+			},
+		},
+	}
+
+	tests := []struct {
+		name        string
+		key         string
+		expectedURL string
+		expectOK    bool
+	}{
+		{
+			name:        "Match MTEL exact uppercase",
+			key:         "MTEL-22122",
+			expectedURL: "https://youtrack.mediatel.co.uk/issue/MTEL-22122",
+			expectOK:    true,
+		},
+		{
+			name:        "Match BARB lowercase key",
+			key:         "barb-123",
+			expectedURL: "https://youtrack.mediatel.co.uk/issue/BARB-123",
+			expectOK:    true,
+		},
+		{
+			name:        "Match FOO other server",
+			key:         "FOO-99",
+			expectedURL: "http://youtrack.other.org/issue/FOO-99",
+			expectOK:    true,
+		},
+		{
+			name:        "No match project",
+			key:         "XYZ-123",
+			expectedURL: "",
+			expectOK:    false,
+		},
+		{
+			name:        "Invalid format no hyphen",
+			key:         "MTEL22122",
+			expectedURL: "",
+			expectOK:    false,
+		},
+		{
+			name:        "Invalid format non-numeric suffix",
+			key:         "MTEL-abc",
+			expectedURL: "",
+			expectOK:    false,
+		},
+		{
+			name:        "Invalid format multiple hyphens",
+			key:         "MTEL-123-45",
+			expectedURL: "",
+			expectOK:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			url, ok := cfg.GetYouTrackURL(tt.key)
+			if ok != tt.expectOK {
+				t.Fatalf("expected ok=%v, got %v", tt.expectOK, ok)
+			}
+			if ok && url != tt.expectedURL {
+				t.Errorf("expected URL %q, got %q", tt.expectedURL, url)
+			}
+		})
+	}
+}
+

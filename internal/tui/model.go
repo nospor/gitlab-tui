@@ -2621,6 +2621,32 @@ func (m Model) openURL(url string) {
 // urlRe matches http:// and https:// URLs.
 var urlRe = regexp.MustCompile(`https?://[^\s<>"']+`)
 
+// youTrackRe matches project keys (like MTEL-22122) in text.
+var youTrackRe = regexp.MustCompile(`\b[a-zA-Z0-9]+-\d+\b`)
+
+type youTrackLink struct {
+	Key string
+	URL string
+}
+
+// extractYouTrackLinks parses project keys and builds YouTrack URLs based on configuration.
+func extractYouTrackLinks(text string, cfg *config.Config) []youTrackLink {
+	if cfg == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var links []youTrackLink
+	for _, m := range youTrackRe.FindAllString(text, -1) {
+		if u, ok := cfg.GetYouTrackURL(m); ok {
+			if !seen[u] {
+				seen[u] = true
+				links = append(links, youTrackLink{Key: strings.ToUpper(m), URL: u})
+			}
+		}
+	}
+	return links
+}
+
 // extractURLs finds all unique URLs in a block of text.
 func extractURLs(text string) []string {
 	seen := map[string]bool{}
@@ -2659,10 +2685,16 @@ func (m Model) collectLinksForDetail() []linkItem {
 		for _, u := range extractURLs(m.mrDetail.Description) {
 			add("📎 "+u, u)
 		}
+		for _, y := range extractYouTrackLinks(m.mrDetail.Description, m.cfg) {
+			add("🎫 "+y.Key, y.URL)
+		}
 		for _, d := range m.mrDiscussions {
 			for _, n := range d.Notes {
 				for _, u := range extractURLs(n.Body) {
 					add("💬 "+u, u)
+				}
+				for _, y := range extractYouTrackLinks(n.Body, m.cfg) {
+					add("🎫 "+y.Key, y.URL)
 				}
 			}
 		}
@@ -2678,6 +2710,9 @@ func (m Model) collectLinksForDetail() []linkItem {
 		add("🔗 Issue on GitLab", m.issueDetail.WebURL)
 		for _, u := range extractURLs(m.issueDetail.Description) {
 			add("📎 "+u, u)
+		}
+		for _, y := range extractYouTrackLinks(m.issueDetail.Description, m.cfg) {
+			add("🎫 "+y.Key, y.URL)
 		}
 	}
 
