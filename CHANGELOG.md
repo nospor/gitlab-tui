@@ -1,4 +1,11 @@
 
+## [0.5.1] - 2026-07-06
+
+### Documentation
+
+- Link yt-tui to its GitHub repository in README ([b3a38aa](https://github.com/nospor/gitlab-tui/commit/b3a38aa3dc688f7ffe55a170592db81497009ccf))
+- Update readme and license ([8cb972e](https://github.com/nospor/gitlab-tui/commit/8cb972e24ea50130b6d4ad6102d5ce6bf760bf23))
+
 ## [0.5.0] - 2026-07-06
 
 ### Features
