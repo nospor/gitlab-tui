@@ -1,6 +1,6 @@
 BIN := gitlab-tui
 CMD := ./cmd/gitlab-tui
-INSTALL_DIR := $(HOME)/.local/bin
+INSTALL_DIR := /usr/local/bin
 
 .PHONY: build install run clean
 

@@ -70,7 +70,7 @@ Edit it to add your servers:
 | `servers`          | —            | List of GitLab server configurations                                                                                                     |
 | `youtrack_servers` | —            | List of YouTrack server configurations to resolve ticket keys to URLs (each server has `name`, `url`, and a list of `projects`)            |
 | `browser_command`  | `"xdg-open"` | Command to open URLs (e.g. `"firefox"`, `"google-chrome"`, `"brave-browser"`). Leave as `"xdg-open"` to use your system default browser. |
-| `youtrack_command` | —            | Command to open YouTrack URLs specifically (e.g. `"yt-tui"`). When set, any URL belonging to a configured YouTrack server is opened via this command instead of `browser_command`. |
+| `youtrack_command` | —            | Command to open YouTrack URLs specifically (e.g. [`yt-tui`](https://github.com/nospor/yt-tui)). When set, any URL belonging to a configured YouTrack server is opened via this command instead of `browser_command`. |
 
 You need a **Personal Access Token** with at least `api` scope. Create one at:
 `https://gitlab.com/-/user_settings/personal_access_tokens`
