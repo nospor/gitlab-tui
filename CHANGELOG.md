@@ -1,5 +1,5 @@
 
-## [unreleased]
+## [0.5.0] - 2026-07-06
 
 ### Features
 
@@ -26,3 +26,7 @@
 ### Refactor
 
 - *(tui)* Remove project select popup and integrate inline search in Projects tab ([c940ab6](https://github.com/nospor/gitlab-tui/commit/c940ab63ff09a30d99bd5fcca6a63e2b4cc231a5))
+
+### Miscellaneous Tasks
+
+- Add git-cliff configuration and changelog workflow ([2d461c4](https://github.com/nospor/gitlab-tui/commit/2d461c42d307d12d7801cbc4034b142f904ea431))
