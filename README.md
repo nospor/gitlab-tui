@@ -145,3 +145,11 @@ Both SSH and HTTPS remotes are supported:
 │       └── styles.go          # Lipgloss styles + colors
 └── Makefile
 ```
+
+## License
+
+See [LICENSE](LICENSE).
+
+## Thanks For Visiting
+Hope you liked it. Wanna **[buy Me a coffee](https://www.buymeacoffee.com/nospor)**?
+
