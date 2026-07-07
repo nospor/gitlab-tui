@@ -1,4 +1,14 @@
 
+## [0.5.3] - 2026-07-07
+
+### Features
+
+- Support opening pipelines and jobs via URL parameters ([f42f523](https://github.com/nospor/gitlab-tui/commit/f42f523817842a46c1bdbfb17ec8e36382337129))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.5.2 [skip ci] ([642cd1c](https://github.com/nospor/gitlab-tui/commit/642cd1c7a9a34b6766c4d3ae0b99aada869d9c40))
+
 ## [0.5.2] - 2026-07-07
 
 ### Features
