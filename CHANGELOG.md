@@ -1,4 +1,15 @@
 
+## [0.5.2] - 2026-07-07
+
+### Features
+
+- *(pipelines)* Add job list, statuses, trace logs, external editor, and auto-refresh ([5e8109f](https://github.com/nospor/gitlab-tui/commit/5e8109f02e05b59433c2e342c7dd90eae56ad893))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.5.0 [skip ci] ([68b6976](https://github.com/nospor/gitlab-tui/commit/68b6976d7ce98cfcda571999b65e58edb6a59eb1))
+- Update CHANGELOG.md for v0.5.1 [skip ci] ([2e2733a](https://github.com/nospor/gitlab-tui/commit/2e2733a46f9db4e1be44a3839732e9509284704b))
+
 ## [0.5.1] - 2026-07-06
 
 ### Documentation
