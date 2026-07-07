@@ -1,4 +1,14 @@
 
+## [0.5.5] - 2026-07-07
+
+### Bug Fixes
+
+- *(theme)* Use green background with dark text for Teams theme titles ([91f88ec](https://github.com/nospor/gitlab-tui/commit/91f88ec3ec51ec3d982dbdeb03c4e90dabffb535))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.5.4 [skip ci] ([1e3500f](https://github.com/nospor/gitlab-tui/commit/1e3500f463126c1ef74997793d1a955a130e0000))
+
 ## [0.5.4] - 2026-07-07
 
 ### Features
