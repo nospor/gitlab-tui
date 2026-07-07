@@ -1,4 +1,14 @@
 
+## [0.5.4] - 2026-07-07
+
+### Features
+
+- New theme ([aabce4a](https://github.com/nospor/gitlab-tui/commit/aabce4ad52a771008cc93ff69dc6dffbe082dcb1))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.5.3 [skip ci] ([10039a9](https://github.com/nospor/gitlab-tui/commit/10039a924f9fdd14cecbeae7021d9d1d7f630b9d))
+
 ## [0.5.3] - 2026-07-07
 
 ### Features
