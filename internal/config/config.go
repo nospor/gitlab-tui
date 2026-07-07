@@ -224,16 +224,16 @@ func (c *Config) DefaultServer() *Server {
 	return nil
 }
 
-// ParseGitLabMRURL parses a GitLab merge request URL and matches it against configured servers.
-// It returns the server index, project path, and MR IID.
-func ParseGitLabMRURL(cfg *Config, rawURL string) (int, string, int, error) {
+// ParseGitLabURL parses a GitLab URL (MR, pipeline, or job) and matches it against configured servers.
+// It returns the server index, project path, MR IID, pipeline ID, job ID, and error.
+func ParseGitLabURL(cfg *Config, rawURL string) (int, string, int, int, int64, error) {
 	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
 		rawURL = "https://" + rawURL
 	}
 
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return -1, "", 0, fmt.Errorf("parsing URL: %w", err)
+		return -1, "", 0, 0, 0, fmt.Errorf("parsing URL: %w", err)
 	}
 
 	// 1. Find the server match
@@ -256,50 +256,83 @@ func ParseGitLabMRURL(cfg *Config, rawURL string) (int, string, int, error) {
 	}
 
 	if serverIdx == -1 {
-		return -1, "", 0, fmt.Errorf("no configured server URL or host matches %q", u.Host)
+		return -1, "", 0, 0, 0, fmt.Errorf("no configured server URL or host matches %q", u.Host)
 	}
 
-	// 2. Extract project path and MR IID
-	// Formats expected: /<project-path>/-/merge_requests/<iid> or /<project-path>/merge_requests/<iid>
-	mrIdx := strings.Index(u.Path, "/-/merge_requests/")
+	// 2. Extract project path and resource type/ID
+	// Formats expected:
+	//   /<project-path>/-/merge_requests/<iid> or /<project-path>/merge_requests/<iid>
+	//   /<project-path>/-/pipelines/<id> or /<project-path>/pipelines/<id>
+	//   /<project-path>/-/jobs/<id> or /<project-path>/jobs/<id>
+	var resourceType string
 	var delimiterLen int
-	if mrIdx >= 0 {
-		delimiterLen = len("/-/merge_requests/")
-	} else {
-		mrIdx = strings.Index(u.Path, "/merge_requests/")
-		if mrIdx >= 0 {
-			delimiterLen = len("/merge_requests/")
+	var resourceIdx int
+
+	delimiters := []struct {
+		resType string
+		delims  []string
+	}{
+		{"merge_requests", []string{"/-/merge_requests/", "/merge_requests/"}},
+		{"pipelines", []string{"/-/pipelines/", "/pipelines/"}},
+		{"jobs", []string{"/-/jobs/", "/jobs/"}},
+	}
+
+	for _, d := range delimiters {
+		for _, delim := range d.delims {
+			idx := strings.Index(u.Path, delim)
+			if idx >= 0 {
+				resourceType = d.resType
+				delimiterLen = len(delim)
+				resourceIdx = idx
+				break
+			}
+		}
+		if resourceType != "" {
+			break
 		}
 	}
 
-	if mrIdx < 0 {
-		return -1, "", 0, fmt.Errorf("URL does not appear to be a GitLab merge request URL (missing '/merge_requests/')")
+	if resourceType == "" {
+		return -1, "", 0, 0, 0, fmt.Errorf("URL does not appear to be a GitLab merge request, pipeline, or job URL")
 	}
 
-	projectPath := strings.TrimPrefix(u.Path[:mrIdx], "/")
+	projectPath := strings.TrimPrefix(u.Path[:resourceIdx], "/")
 	if projectPath == "" {
-		return -1, "", 0, fmt.Errorf("could not extract project path from URL")
+		return -1, "", 0, 0, 0, fmt.Errorf("could not extract project path from URL")
 	}
 
-	mrPart := u.Path[mrIdx+delimiterLen:]
-	if qIdx := strings.IndexAny(mrPart, "?#"); qIdx >= 0 {
-		mrPart = mrPart[:qIdx]
+	part := u.Path[resourceIdx+delimiterLen:]
+	if qIdx := strings.IndexAny(part, "?#"); qIdx >= 0 {
+		part = part[:qIdx]
 	}
-	mrPart = strings.Trim(mrPart, "/")
-	if slashIdx := strings.Index(mrPart, "/"); slashIdx >= 0 {
-		mrPart = mrPart[:slashIdx]
-	}
-
-	if mrPart == "" {
-		return -1, "", 0, fmt.Errorf("could not extract merge request IID from URL")
+	part = strings.Trim(part, "/")
+	if slashIdx := strings.Index(part, "/"); slashIdx >= 0 {
+		part = part[:slashIdx]
 	}
 
-	mrIID, err := strconv.Atoi(mrPart)
+	if part == "" {
+		return -1, "", 0, 0, 0, fmt.Errorf("could not extract ID from URL")
+	}
+
+	idVal, err := strconv.ParseInt(part, 10, 64)
 	if err != nil {
-		return -1, "", 0, fmt.Errorf("invalid merge request IID %q: %w", mrPart, err)
+		return -1, "", 0, 0, 0, fmt.Errorf("invalid ID %q: %w", part, err)
 	}
 
-	return serverIdx, projectPath, mrIID, nil
+	var mrIID int
+	var pipelineID int
+	var jobID int64
+
+	switch resourceType {
+	case "merge_requests":
+		mrIID = int(idVal)
+	case "pipelines":
+		pipelineID = int(idVal)
+	case "jobs":
+		jobID = idVal
+	}
+
+	return serverIdx, projectPath, mrIID, pipelineID, jobID, nil
 }
 
 // GetYouTrackURL checks if a project key is configured for a YouTrack server,

@@ -770,6 +770,19 @@ func (c *Client) RetryJob(projectID int, jobID int64) error {
 	return err
 }
 
+// GetJobPipelineID fetches the pipeline ID for a given job.
+func (c *Client) GetJobPipelineID(projectID int, jobID int64) (int, error) {
+	job, _, err := c.raw.Jobs.GetJob(projectID, jobID)
+	if err != nil {
+		return 0, err
+	}
+	if job.Pipeline.ID == 0 {
+		return 0, fmt.Errorf("job has no pipeline information")
+	}
+	return int(job.Pipeline.ID), nil
+}
+
+
 // GetJobTrace fetches the log/trace file of a job.
 func (c *Client) GetJobTrace(projectID int, jobID int64) (string, error) {
 	reader, _, err := c.raw.Jobs.GetTraceFile(projectID, jobID)

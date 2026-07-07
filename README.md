@@ -28,6 +28,29 @@ make build
 ./gitlab-tui
 ```
 
+## Usage
+
+You can start `gitlab-tui` in the current directory's auto-detected project (or select a project inside the TUI):
+
+```bash
+gitlab-tui
+```
+
+### Opening specific resources directly
+
+You can pass a GitLab URL (Merge Request, Pipeline, or Job) as an argument to open that resource directly on startup:
+
+```bash
+# Open a merge request directly
+gitlab-tui https://gitlab.com/group/project/-/merge_requests/123
+
+# Open a pipeline directly
+gitlab-tui https://gitlab.com/group/project/-/pipelines/33780
+
+# Open a job trace directly
+gitlab-tui https://gitlab.com/group/project/-/jobs/155933
+```
+
 ## Configuration
 
 On first run, a sample config is created at:

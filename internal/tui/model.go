@@ -103,6 +103,9 @@ type (
 		trace string
 	}
 	tickMsg struct{}
+	jobPipelineIDMsg struct {
+		pipelineID int
+	}
 )
 
 // ─── Confirmation action ──────────────────────────────────────────────────────
@@ -130,7 +133,9 @@ type Model struct {
 	client     *gitlab.Client
 	project    *gitlab.ProjectInfo
 	username   string
-	initialMRIID int
+	initialMRIID      int
+	initialPipelineID int
+	initialJobID      int64
 
 	state     appState
 	tab       tabID
@@ -217,7 +222,7 @@ type Model struct {
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
 // New creates the root model.
-func New(cfg *config.Config, serverIdx int, client *gitlab.Client, project *gitlab.ProjectInfo, startupWarn string, initialMRIID int) Model {
+func New(cfg *config.Config, serverIdx int, client *gitlab.Client, project *gitlab.ProjectInfo, startupWarn string, initialMRIID int, initialPipelineID int, initialJobID int64) Model {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(colorAccent)
@@ -248,23 +253,25 @@ func New(cfg *config.Config, serverIdx int, client *gitlab.Client, project *gitl
 	ci.BlurredStyle.EndOfBuffer = ci.BlurredStyle.EndOfBuffer.Background(colorBgPanel)
 
 	m := Model{
-		cfg:          cfg,
-		serverIdx:    serverIdx,
-		client:       client,
-		project:      project,
-		startupWarn:  startupWarn,
-		initialMRIID: initialMRIID,
-		state:        stateLoading,
-		loadMsg:     "Connecting to GitLab...",
-		tab:       tabMRs,
-		spin:      sp,
-		mrState:   gitlab.MRStateOpened,
-		mrPage:    1,
-		pipelinePage: 1,
-		issuePage:    1,
-		projectPage:  1,
-		projectSearch: ti,
-		commentInput:  ci,
+		cfg:               cfg,
+		serverIdx:         serverIdx,
+		client:            client,
+		project:           project,
+		startupWarn:       startupWarn,
+		initialMRIID:      initialMRIID,
+		initialPipelineID: initialPipelineID,
+		initialJobID:      initialJobID,
+		state:             stateLoading,
+		loadMsg:           "Connecting to GitLab...",
+		tab:               tabMRs,
+		spin:              sp,
+		mrState:           gitlab.MRStateOpened,
+		mrPage:            1,
+		pipelinePage:      1,
+		issuePage:         1,
+		projectPage:       1,
+		projectSearch:     ti,
+		commentInput:      ci,
 	}
 	return m
 }
@@ -309,6 +316,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.projectSearch.Focus()
 			return m, m.cmdLoadProjects()
 		}
+		if m.initialJobID > 0 {
+			m.state = stateLoading
+			m.loadMsg = fmt.Sprintf("Loading job #%d details...", m.initialJobID)
+			m.tab = tabPipelines
+			return m, m.cmdGetJobPipelineID(m.initialJobID)
+		}
+		if m.initialPipelineID > 0 {
+			m.state = stateLoading
+			m.loadMsg = fmt.Sprintf("Loading pipeline #%d...", m.initialPipelineID)
+			m.tab = tabPipelines
+			return m, tea.Batch(
+				m.cmdLoadPipelineDetail(m.initialPipelineID),
+				m.cmdLoadPipelineJobs(m.initialPipelineID),
+			)
+		}
 		if m.initialMRIID > 0 {
 			m.state = stateLoading
 			m.loadMsg = fmt.Sprintf("Loading merge request !%d...", m.initialMRIID)
@@ -317,6 +339,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = stateLoading
 		m.loadMsg = "Loading merge requests..."
 		return m, m.cmdLoadMRs()
+
+	case jobPipelineIDMsg:
+		m.initialPipelineID = msg.pipelineID
+		m.loadMsg = fmt.Sprintf("Loading pipeline #%d...", m.initialPipelineID)
+		return m, tea.Batch(
+			m.cmdLoadPipelineDetail(m.initialPipelineID),
+			m.cmdLoadPipelineJobs(m.initialPipelineID),
+		)
 
 	case mrLoadedMsg:
 		m.mrs = msg.items
@@ -367,6 +397,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case pipelineJobsLoadedMsg:
 		m.pipelineJobs = msg.items
+		if m.initialJobID > 0 {
+			jobIdx := -1
+			for i, job := range m.pipelineJobs {
+				if job.ID == m.initialJobID {
+					jobIdx = i
+					break
+				}
+			}
+			if jobIdx >= 0 {
+				m.jobCursor = jobIdx
+				job := m.pipelineJobs[jobIdx]
+				m.initialJobID = 0 // Clear it so we don't repeat this
+				m.state = stateLoading
+				m.loadMsg = "Loading job trace..."
+				return m, m.cmdLoadJobTrace(job)
+			}
+			m.initialJobID = 0 // Clear even if not found
+		}
 		if m.jobCursor >= len(m.pipelineJobs) {
 			m.jobCursor = len(m.pipelineJobs) - 1
 		}
@@ -380,6 +428,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case pipelineDetailLoadedMsg:
 		m.pipelineDetail = msg.item
+		if m.state == stateLoading && m.initialJobID == 0 && m.loadMsg != "Loading job trace..." {
+			m.state = stateDetail
+			m.prevState = stateMain
+			m.tab = tabPipelines
+		}
 		if m.state == stateDetail && m.tab == tabPipelines && isPipelineOrJobsActive(m.pipelineDetail, m.pipelineJobs) {
 			return m, tickCmd()
 		}
@@ -1572,6 +1625,20 @@ func (m Model) cmdLoadJobTrace(job *gitlab.JobInfo) tea.Cmd {
 			return errMsg{err}
 		}
 		return jobTraceLoadedMsg{job, trace}
+	}
+}
+
+func (m Model) cmdGetJobPipelineID(jobID int64) tea.Cmd {
+	if m.project == nil {
+		return nil
+	}
+	pid := m.project.ID
+	return func() tea.Msg {
+		pipelineID, err := m.client.GetJobPipelineID(pid, jobID)
+		if err != nil {
+			return errMsg{err}
+		}
+		return jobPipelineIDMsg{pipelineID}
 	}
 }
 

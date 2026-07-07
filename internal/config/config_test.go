@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-func TestParseGitLabMRURL(t *testing.T) {
+func TestParseGitLabURL(t *testing.T) {
 	cfg := &Config{
 		Servers: []Server{
 			{
@@ -19,43 +19,61 @@ func TestParseGitLabMRURL(t *testing.T) {
 	}
 
 	tests := []struct {
-		name        string
-		url         string
-		expectedIdx int
-		expectedPrj string
-		expectedIID int
-		expectError bool
+		name             string
+		url              string
+		expectedIdx      int
+		expectedPrj      string
+		expectedMRIID    int
+		expectedPipeline int
+		expectedJob      int64
+		expectError      bool
 	}{
 		{
-			name:        "Standard URL mediatel",
-			url:         "https://gitlab.mediatel.co.uk/audio/audiotrack-admin-hub/-/merge_requests/25",
+			name:          "Standard URL mediatel MR",
+			url:           "https://gitlab.mediatel.co.uk/audio/audiotrack-admin-hub/-/merge_requests/25",
+			expectedIdx:   0,
+			expectedPrj:   "audio/audiotrack-admin-hub",
+			expectedMRIID: 25,
+			expectError:   false,
+		},
+		{
+			name:          "URL without HTTPS prefix MR",
+			url:           "gitlab.mediatel.co.uk/audio/audiotrack-admin-hub/-/merge_requests/25",
+			expectedIdx:   0,
+			expectedPrj:   "audio/audiotrack-admin-hub",
+			expectedMRIID: 25,
+			expectError:   false,
+		},
+		{
+			name:          "Standard URL gitlab.com MR",
+			url:           "https://gitlab.com/gitlab-org/gitlab/-/merge_requests/12345/diffs?view=inline",
+			expectedIdx:   1,
+			expectedPrj:   "gitlab-org/gitlab",
+			expectedMRIID: 12345,
+			expectError:   false,
+		},
+		{
+			name:          "Old style merge request URL (no /-/ )",
+			url:           "https://gitlab.com/group/subgroup/project/merge_requests/99",
+			expectedIdx:   1,
+			expectedPrj:   "group/subgroup/project",
+			expectedMRIID: 99,
+			expectError:   false,
+		},
+		{
+			name:             "Pipeline URL",
+			url:              "https://gitlab.mediatel.co.uk/adwanted/srds/-/pipelines/33780",
+			expectedIdx:      0,
+			expectedPrj:      "adwanted/srds",
+			expectedPipeline: 33780,
+			expectError:      false,
+		},
+		{
+			name:        "Job URL",
+			url:         "https://gitlab.mediatel.co.uk/adwanted/srds/-/jobs/155933",
 			expectedIdx: 0,
-			expectedPrj: "audio/audiotrack-admin-hub",
-			expectedIID: 25,
-			expectError: false,
-		},
-		{
-			name:        "URL without HTTPS prefix",
-			url:         "gitlab.mediatel.co.uk/audio/audiotrack-admin-hub/-/merge_requests/25",
-			expectedIdx: 0,
-			expectedPrj: "audio/audiotrack-admin-hub",
-			expectedIID: 25,
-			expectError: false,
-		},
-		{
-			name:        "Standard URL gitlab.com",
-			url:         "https://gitlab.com/gitlab-org/gitlab/-/merge_requests/12345/diffs?view=inline",
-			expectedIdx: 1,
-			expectedPrj: "gitlab-org/gitlab",
-			expectedIID: 12345,
-			expectError: false,
-		},
-		{
-			name:        "Old style merge request URL (no /-/ )",
-			url:         "https://gitlab.com/group/subgroup/project/merge_requests/99",
-			expectedIdx: 1,
-			expectedPrj: "group/subgroup/project",
-			expectedIID: 99,
+			expectedPrj: "adwanted/srds",
+			expectedJob: 155933,
 			expectError: false,
 		},
 		{
@@ -64,7 +82,7 @@ func TestParseGitLabMRURL(t *testing.T) {
 			expectError: true,
 		},
 		{
-			name:        "Not a merge request URL",
+			name:        "Not a valid URL",
 			url:         "https://gitlab.com/group/project",
 			expectError: true,
 		},
@@ -72,7 +90,7 @@ func TestParseGitLabMRURL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			idx, prj, iid, err := ParseGitLabMRURL(cfg, tt.url)
+			idx, prj, mrIID, pipelineID, jobID, err := ParseGitLabURL(cfg, tt.url)
 			if tt.expectError {
 				if err == nil {
 					t.Errorf("expected error, got none")
@@ -87,8 +105,14 @@ func TestParseGitLabMRURL(t *testing.T) {
 				if prj != tt.expectedPrj {
 					t.Errorf("expected project path %q, got %q", tt.expectedPrj, prj)
 				}
-				if iid != tt.expectedIID {
-					t.Errorf("expected MR IID %d, got %d", tt.expectedIID, iid)
+				if mrIID != tt.expectedMRIID {
+					t.Errorf("expected MR IID %d, got %d", tt.expectedMRIID, mrIID)
+				}
+				if pipelineID != tt.expectedPipeline {
+					t.Errorf("expected Pipeline ID %d, got %d", tt.expectedPipeline, pipelineID)
+				}
+				if jobID != tt.expectedJob {
+					t.Errorf("expected Job ID %d, got %d", tt.expectedJob, jobID)
 				}
 			}
 		})
