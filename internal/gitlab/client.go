@@ -2,6 +2,7 @@ package gitlab
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -662,6 +663,28 @@ func (c *Client) CancelPipeline(projectID, pipelineID int) error {
 	return err
 }
 
+// GetPipeline fetches details of a single pipeline.
+func (c *Client) GetPipeline(projectID, pipelineID int) (*PipelineInfo, error) {
+	p, _, err := c.raw.Pipelines.GetPipeline(projectID, int64(pipelineID))
+	if err != nil {
+		return nil, err
+	}
+	info := &PipelineInfo{
+		ID:     i64(p.ID),
+		Ref:    p.Ref,
+		Status: p.Status,
+		WebURL: p.WebURL,
+		Source: string(p.Source),
+	}
+	if p.CreatedAt != nil {
+		info.CreatedAt = p.CreatedAt.Format("2006-01-02 15:04")
+	}
+	if p.UpdatedAt != nil {
+		info.UpdatedAt = p.UpdatedAt.Format("2006-01-02 15:04")
+	}
+	return info, nil
+}
+
 // TriggerPipeline triggers a new pipeline on a ref.
 func (c *Client) TriggerPipeline(projectID int, ref string) (*PipelineInfo, error) {
 	p, _, err := c.raw.Pipelines.CreatePipeline(projectID, &gl.CreatePipelineOptions{
@@ -677,6 +700,87 @@ func (c *Client) TriggerPipeline(projectID int, ref string) (*PipelineInfo, erro
 		WebURL: p.WebURL,
 	}
 	return info, nil
+}
+
+// ─── Jobs ────────────────────────────────────────────────────────────────────
+
+// JobInfo holds details of a pipeline job.
+type JobInfo struct {
+	ID            int64
+	Name          string
+	Stage         string
+	Status        string
+	AllowFailure  bool
+	CreatedAt     string
+	StartedAt     string
+	FinishedAt    string
+	Duration      int // duration in seconds
+	FailureReason string
+}
+
+// ListPipelineJobs lists jobs for a specific pipeline in a project.
+func (c *Client) ListPipelineJobs(projectID int, pipelineID int) ([]*JobInfo, error) {
+	var result []*JobInfo
+	page := int64(1)
+	for {
+		opts := &gl.ListJobsOptions{
+			ListOptions: gl.ListOptions{
+				Page:    page,
+				PerPage: 100,
+			},
+		}
+		jobs, resp, err := c.raw.Jobs.ListPipelineJobs(projectID, int64(pipelineID), opts)
+		if err != nil {
+			return nil, fmt.Errorf("listing pipeline jobs: %w", err)
+		}
+		for _, j := range jobs {
+			info := &JobInfo{
+				ID:           j.ID,
+				Name:         j.Name,
+				Stage:        j.Stage,
+				Status:       j.Status,
+				AllowFailure: j.AllowFailure,
+				Duration:     int(j.Duration),
+			}
+			if j.CreatedAt != nil {
+				info.CreatedAt = j.CreatedAt.Format("2006-01-02 15:04")
+			}
+			if j.StartedAt != nil {
+				info.StartedAt = j.StartedAt.Format("2006-01-02 15:04")
+			}
+			if j.FinishedAt != nil {
+				info.FinishedAt = j.FinishedAt.Format("2006-01-02 15:04")
+			}
+			if j.FailureReason != "" {
+				info.FailureReason = j.FailureReason
+			}
+			result = append(result, info)
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		page = resp.NextPage
+	}
+	return result, nil
+}
+
+// RetryJob retries a single job of a project.
+func (c *Client) RetryJob(projectID int, jobID int64) error {
+	_, _, err := c.raw.Jobs.RetryJob(projectID, jobID)
+	return err
+}
+
+// GetJobTrace fetches the log/trace file of a job.
+func (c *Client) GetJobTrace(projectID int, jobID int64) (string, error) {
+	reader, _, err := c.raw.Jobs.GetTraceFile(projectID, jobID)
+	if err != nil {
+		return "", fmt.Errorf("getting job trace: %w", err)
+	}
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return "", fmt.Errorf("reading job trace: %w", err)
+	}
+	return string(data), nil
 }
 
 // ─── Issues ──────────────────────────────────────────────────────────────────

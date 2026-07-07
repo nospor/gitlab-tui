@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
@@ -91,6 +92,17 @@ type (
 	mrDiscussionsLoadedMsg struct {
 		discussions []*gitlab.MRDiscussion
 	}
+	pipelineJobsLoadedMsg struct {
+		items []*gitlab.JobInfo
+	}
+	pipelineDetailLoadedMsg struct {
+		item *gitlab.PipelineInfo
+	}
+	jobTraceLoadedMsg struct {
+		job   *gitlab.JobInfo
+		trace string
+	}
+	tickMsg struct{}
 )
 
 // ─── Confirmation action ──────────────────────────────────────────────────────
@@ -161,11 +173,18 @@ type Model struct {
 	linkCursor int
 
 	// Pipeline view
-	pipelines       []*gitlab.PipelineInfo
-	pipelinePage    int
-	pipelineTotalPage int
-	pipelineCursor  int
-	pipelineDetail  *gitlab.PipelineInfo
+	pipelines            []*gitlab.PipelineInfo
+	pipelinePage         int
+	pipelineTotalPage    int
+	pipelineCursor       int
+	pipelineDetail       *gitlab.PipelineInfo
+	pipelineJobs         []*gitlab.JobInfo
+	jobCursor            int
+	jobTrace             string
+	jobTraceJob          *gitlab.JobInfo
+	jobTraceScrollOffset int
+	jobTraceOpen         bool
+	jobTraceFocus        bool
 
 	// Issue view
 	issues         []*gitlab.IssueInfo
@@ -346,6 +365,46 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pipelineCursor = 0
 		return m, nil
 
+	case pipelineJobsLoadedMsg:
+		m.pipelineJobs = msg.items
+		if m.jobCursor >= len(m.pipelineJobs) {
+			m.jobCursor = len(m.pipelineJobs) - 1
+		}
+		if m.jobCursor < 0 {
+			m.jobCursor = 0
+		}
+		if m.state == stateDetail && m.tab == tabPipelines && isPipelineOrJobsActive(m.pipelineDetail, m.pipelineJobs) {
+			return m, tickCmd()
+		}
+		return m, nil
+
+	case pipelineDetailLoadedMsg:
+		m.pipelineDetail = msg.item
+		if m.state == stateDetail && m.tab == tabPipelines && isPipelineOrJobsActive(m.pipelineDetail, m.pipelineJobs) {
+			return m, tickCmd()
+		}
+		return m, nil
+
+	case tickMsg:
+		if m.state == stateDetail && m.tab == tabPipelines && m.pipelineDetail != nil && isPipelineOrJobsActive(m.pipelineDetail, m.pipelineJobs) {
+			return m, tea.Batch(
+				m.cmdLoadPipelineDetail(m.pipelineDetail.ID),
+				m.cmdLoadPipelineJobs(m.pipelineDetail.ID),
+			)
+		}
+		return m, nil
+
+	case jobTraceLoadedMsg:
+		m.jobTraceJob = msg.job
+		traceStr := strings.ReplaceAll(msg.trace, "\r\n", "\n")
+		traceStr = strings.ReplaceAll(traceStr, "\r", "\n")
+		m.jobTrace = traceStr
+		m.jobTraceScrollOffset = 0
+		m.jobTraceOpen = true
+		m.jobTraceFocus = true
+		m.state = stateDetail
+		return m, nil
+
 	case issueLoadedMsg:
 		m.issues = msg.items
 		m.issueTotalPage = msg.totalPages
@@ -366,6 +425,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(
 				m.cmdLoadMRDetail(m.mrDetail.IID),
 				m.cmdLoadMRDiscussions(m.mrDetail.IID),
+			)
+		}
+		if m.state == stateDetail && m.tab == tabPipelines && m.pipelineDetail != nil {
+			return m, tea.Batch(
+				m.cmdLoadPipelineDetail(m.pipelineDetail.ID),
+				m.cmdLoadPipelineJobs(m.pipelineDetail.ID),
 			)
 		}
 		return m, m.reloadCurrent()
@@ -450,6 +515,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.mrDiffPanelOpen = false
 				return m, nil
 			}
+			if m.jobTraceOpen {
+				m.jobTraceOpen = false
+				m.jobTraceFocus = false
+				return m, nil
+			}
 			m.state = stateMain
 			m.mrDetail = nil
 			m.mrDiffFiles = nil
@@ -458,6 +528,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mrDiscussions = nil
 			m.mrDetailScrollOffset = 0
 			m.pipelineDetail = nil
+			m.pipelineJobs = nil
+			m.jobCursor = 0
+			m.jobTrace = ""
+			m.jobTraceJob = nil
+			m.jobTraceOpen = false
+			m.jobTraceFocus = false
 			m.issueDetail = nil
 			if len(m.mrs) == 0 {
 				m.state = stateLoading
@@ -734,8 +810,65 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 		if m.pipelineDetail == nil {
 			return m, nil
 		}
+		if m.jobTraceOpen {
+			switch key {
+			case "j", "down":
+				m.jobTraceScrollOffset++
+				return m, nil
+			case "k", "up":
+				if m.jobTraceScrollOffset > 0 {
+					m.jobTraceScrollOffset--
+				}
+				return m, nil
+			case "g":
+				m.jobTraceScrollOffset = 0
+				return m, nil
+			case "G":
+				bodyH := m.getBodyHeight()
+				traceH := bodyH - 3
+				traceLines := strings.Split(m.jobTrace, "\n")
+				m.jobTraceScrollOffset = len(traceLines) - traceH
+				if m.jobTraceScrollOffset < 0 {
+					m.jobTraceScrollOffset = 0
+				}
+				return m, nil
+			case "ctrl+g":
+				return m, m.cmdOpenTraceInEditor()
+			case "esc", "tab", "enter":
+				m.jobTraceOpen = false
+				m.jobTraceFocus = false
+				return m, nil
+			}
+			return m, nil
+		}
 		switch key {
+		case "j", "down":
+			if len(m.pipelineJobs) > 0 && m.jobCursor < len(m.pipelineJobs)-1 {
+				m.jobCursor++
+			}
+			return m, nil
+		case "k", "up":
+			if m.jobCursor > 0 {
+				m.jobCursor--
+			}
+			return m, nil
+		case "enter":
+			if len(m.pipelineJobs) > 0 && m.jobCursor < len(m.pipelineJobs) {
+				job := m.pipelineJobs[m.jobCursor]
+				m.state = stateLoading
+				m.prevState = stateDetail
+				m.loadMsg = "Loading job trace..."
+				return m, m.cmdLoadJobTrace(job)
+			}
+			return m, nil
 		case "r":
+			if len(m.pipelineJobs) > 0 && m.jobCursor < len(m.pipelineJobs) {
+				job := m.pipelineJobs[m.jobCursor]
+				return m.promptConfirm("Retry Job", fmt.Sprintf("Retry job '%s'?", job.Name),
+					m.cmdRetryJob(job.ID))
+			}
+			return m, nil
+		case "R":
 			return m.promptConfirm("Retry Pipeline", fmt.Sprintf("Retry pipeline #%d?", m.pipelineDetail.ID),
 				m.cmdRetryPipeline(m.pipelineDetail.ID))
 		case "c":
@@ -1170,6 +1303,16 @@ func (m Model) openDetail() (Model, tea.Cmd) {
 			m.pipelineDetail = m.pipelines[m.pipelineCursor]
 			m.prevState = stateMain
 			m.state = stateDetail
+			m.pipelineJobs = nil
+			m.jobCursor = 0
+			m.jobTrace = ""
+			m.jobTraceJob = nil
+			m.jobTraceOpen = false
+			m.jobTraceFocus = false
+			return m, tea.Batch(
+				m.cmdLoadPipelineDetail(m.pipelineDetail.ID),
+				m.cmdLoadPipelineJobs(m.pipelineDetail.ID),
+			)
 		}
 	case tabIssues:
 		if m.issueCursor < len(m.issues) {
@@ -1387,6 +1530,62 @@ func (m Model) cmdCancelPipeline(id int) tea.Cmd {
 			return errMsg{err}
 		}
 		return actionDoneMsg{"Pipeline cancelled!"}
+	}
+}
+
+func (m Model) cmdLoadPipelineDetail(pipelineID int) tea.Cmd {
+	if m.project == nil {
+		return nil
+	}
+	pid := m.project.ID
+	return func() tea.Msg {
+		item, err := m.client.GetPipeline(pid, pipelineID)
+		if err != nil {
+			return errMsg{err}
+		}
+		return pipelineDetailLoadedMsg{item}
+	}
+}
+
+func (m Model) cmdLoadPipelineJobs(pipelineID int) tea.Cmd {
+	if m.project == nil {
+		return nil
+	}
+	pid := m.project.ID
+	return func() tea.Msg {
+		items, err := m.client.ListPipelineJobs(pid, pipelineID)
+		if err != nil {
+			return errMsg{err}
+		}
+		return pipelineJobsLoadedMsg{items}
+	}
+}
+
+func (m Model) cmdLoadJobTrace(job *gitlab.JobInfo) tea.Cmd {
+	if m.project == nil {
+		return nil
+	}
+	pid := m.project.ID
+	return func() tea.Msg {
+		trace, err := m.client.GetJobTrace(pid, job.ID)
+		if err != nil {
+			return errMsg{err}
+		}
+		return jobTraceLoadedMsg{job, trace}
+	}
+}
+
+func (m Model) cmdRetryJob(jobID int64) tea.Cmd {
+	if m.project == nil {
+		return nil
+	}
+	pid := m.project.ID
+	return func() tea.Msg {
+		err := m.client.RetryJob(pid, jobID)
+		if err != nil {
+			return errMsg{err}
+		}
+		return actionDoneMsg{fmt.Sprintf("Job #%d retried successfully", jobID)}
 	}
 }
 
@@ -1862,10 +2061,7 @@ func (m Model) viewDetail() string {
 	header := lipgloss.NewStyle().Width(m.width).MaxHeight(1).Render(m.viewHeader())
 	footer := lipgloss.NewStyle().Width(m.width).Render(m.viewDetailFooter())
 
-	bodyH := m.height - lipgloss.Height(header) - lipgloss.Height(footer) - m.getHeightOffset()
-	if bodyH < 1 {
-		bodyH = 1
-	}
+	bodyH := m.getBodyHeight()
 
 	var body string
 	switch m.tab {
@@ -1876,7 +2072,7 @@ func (m Model) viewDetail() string {
 			body = m.viewMRDetail(bodyH)
 		}
 	case tabPipelines:
-		body = m.viewPipelineDetail()
+		body = m.viewPipelineDetail(bodyH)
 	case tabIssues:
 		body = m.viewIssueDetail()
 	}
@@ -2281,34 +2477,183 @@ func (m Model) viewMRDetailForWidth(w int) string {
 	return strings.Join(lines, "\n")
 }
 
-func (m Model) viewPipelineDetail() string {
+func (m Model) viewPipelineDetail(bodyH int) string {
 	p := m.pipelineDetail
 	if p == nil {
 		return ""
 	}
-	w := m.width - 4
 
-	title := boldStyle.Render(fmt.Sprintf("Pipeline #%d", p.ID))
-	divider := lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", w))
+	leftW := m.width * 2 / 5
+	if leftW < 30 {
+		leftW = 30
+	}
+	rightW := m.width - leftW - 1 // -1 for separator
 
-	return strings.Join([]string{
-		"",
-		lipgloss.NewStyle().PaddingLeft(2).Render(title),
-		lipgloss.NewStyle().PaddingLeft(2).Render(lipgloss.JoinHorizontal(lipgloss.Center,
-			statusBadge(p.Status), "  ",
-			dimStyle.Render("Ref: "), accentStyle.Render(p.Ref), "  ",
-			dimStyle.Render("Source: "), dimStyle.Render(p.Source),
-		)),
-		lipgloss.NewStyle().PaddingLeft(2).Render(
-			dimStyle.Render("Triggered by: ") + p.User),
-		lipgloss.NewStyle().PaddingLeft(2).Render(
-			dimStyle.Render("Created: " + p.CreatedAt + "  Updated: " + p.UpdatedAt)),
-		"",
-		lipgloss.NewStyle().PaddingLeft(2).Render(divider),
-		"",
-		lipgloss.NewStyle().PaddingLeft(2).Render(
-			lipgloss.NewStyle().Foreground(colorInfo).Render("🔗 " + p.WebURL)),
-	}, "\n")
+	// ─── Left Panel: Pipeline Info & Job List ───
+	var leftLines []string
+
+	// Pipeline Metadata
+	leftLines = append(leftLines, "")
+	leftLines = append(leftLines, boldStyle.Render(fmt.Sprintf("Pipeline #%d", p.ID)))
+	leftLines = append(leftLines, lipgloss.JoinHorizontal(lipgloss.Center,
+		statusBadge(p.Status), "  ",
+		dimStyle.Render("Ref: "), accentStyle.Render(p.Ref),
+	))
+	leftLines = append(leftLines, dimStyle.Render("Source: ")+p.Source)
+	leftLines = append(leftLines, dimStyle.Render("User: ")+p.User)
+	leftLines = append(leftLines, dimStyle.Render("Created: ")+p.CreatedAt)
+	leftLines = append(leftLines, dimStyle.Render("Updated: ")+p.UpdatedAt)
+	leftLines = append(leftLines, lipgloss.NewStyle().Foreground(colorInfo).Render("🔗 "+truncate(p.WebURL, leftW-2)))
+
+	leftLines = append(leftLines, lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", leftW-2)))
+	leftLines = append(leftLines, subtitleStyle.Render(" Jobs"))
+
+	metaHeight := len(leftLines)
+	jobsH := bodyH - metaHeight - 1
+	if jobsH < 2 {
+		jobsH = 2
+	}
+
+	if m.pipelineJobs == nil {
+		leftLines = append(leftLines, "", dimStyle.Italic(true).Render(" Loading jobs..."))
+	} else if len(m.pipelineJobs) == 0 {
+		leftLines = append(leftLines, "", dimStyle.Italic(true).Render(" No jobs found."))
+	} else {
+		// Calculate job scroll offset
+		startJobIdx := m.jobCursor - jobsH/2
+		if startJobIdx < 0 {
+			startJobIdx = 0
+		}
+		if startJobIdx+jobsH > len(m.pipelineJobs) {
+			startJobIdx = len(m.pipelineJobs) - jobsH
+		}
+		if startJobIdx < 0 {
+			startJobIdx = 0
+		}
+
+		for i := 0; i < jobsH; i++ {
+			idx := startJobIdx + i
+			if idx >= len(m.pipelineJobs) {
+				break
+			}
+			job := m.pipelineJobs[idx]
+			selected := idx == m.jobCursor
+
+			// Format row
+			statusStr := statusBadge(job.Status)
+			nameStr := truncate(job.Name, leftW-16) // truncate so it fits
+
+			rowText := fmt.Sprintf("%s %s", statusStr, nameStr)
+			if selected {
+				leftLines = append(leftLines, selectedStyle.Width(leftW-2).Render("▶ "+rowText))
+			} else {
+				leftLines = append(leftLines, normalItemStyle.Width(leftW-2).Render("  "+rowText))
+			}
+		}
+	}
+
+	if len(leftLines) > bodyH {
+		leftLines = leftLines[:bodyH]
+	}
+	leftContent := strings.Join(leftLines, "\n")
+	leftPanel := lipgloss.NewStyle().Width(leftW).Height(bodyH).MaxHeight(bodyH).Render(leftContent)
+
+	// ─── Separator ───
+	sepContent := strings.Repeat("│\n", bodyH)
+	if bodyH > 0 {
+		sepContent = sepContent[:len(sepContent)-1]
+	}
+	sep := lipgloss.NewStyle().Foreground(colorBorder).Render(sepContent)
+
+	// ─── Right Panel: Job Trace or Job Details ───
+	var rightLines []string
+
+	if m.jobTraceOpen {
+		// Show Job Trace
+		rightLines = append(rightLines, subtitleStyle.Render(fmt.Sprintf("  Trace Log: %s", m.jobTraceJob.Name)))
+		rightLines = append(rightLines, dimStyle.Render("  (Esc/Enter=Close, j/k=Scroll, g/G=Top/Bottom, ctrl+g=Editor)"))
+		rightLines = append(rightLines, lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", rightW-2)))
+
+		traceH := bodyH - len(rightLines)
+		if traceH < 1 {
+			traceH = 1
+		}
+
+		traceLines := strings.Split(m.jobTrace, "\n")
+
+		maxOffset := len(traceLines) - traceH
+		if maxOffset < 0 {
+			maxOffset = 0
+		}
+		offset := m.jobTraceScrollOffset
+		if offset > maxOffset {
+			offset = maxOffset
+		}
+		if offset < 0 {
+			offset = 0
+		}
+
+		end := offset + traceH
+		if end > len(traceLines) {
+			end = len(traceLines)
+		}
+
+		for _, tl := range traceLines[offset:end] {
+			rightLines = append(rightLines, truncate(tl, rightW-2))
+		}
+	} else {
+		// Show Job details
+		rightLines = append(rightLines, subtitleStyle.Render("  Job Details"))
+		rightLines = append(rightLines, lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", rightW-2)))
+		rightLines = append(rightLines, "")
+
+		if m.pipelineJobs == nil {
+			rightLines = append(rightLines, dimStyle.Italic(true).Render("  Loading jobs..."))
+		} else if len(m.pipelineJobs) == 0 {
+			rightLines = append(rightLines, dimStyle.Italic(true).Render("  No jobs to display details for."))
+		} else if m.jobCursor < len(m.pipelineJobs) {
+			job := m.pipelineJobs[m.jobCursor]
+
+			rightLines = append(rightLines, boldStyle.Render(fmt.Sprintf("  Job: %s (ID: #%d)", job.Name, job.ID)))
+			rightLines = append(rightLines, "")
+			rightLines = append(rightLines, fmt.Sprintf("  Stage:          %s", job.Stage))
+			rightLines = append(rightLines, fmt.Sprintf("  Status:         %s", statusBadge(job.Status)))
+
+			durStr := "n/a"
+			if job.Duration > 0 {
+				durStr = fmt.Sprintf("%ds", job.Duration)
+			}
+			rightLines = append(rightLines, fmt.Sprintf("  Duration:       %s", durStr))
+			rightLines = append(rightLines, fmt.Sprintf("  Created:        %s", job.CreatedAt))
+			rightLines = append(rightLines, fmt.Sprintf("  Started:        %s", job.StartedAt))
+			rightLines = append(rightLines, fmt.Sprintf("  Finished:       %s", job.FinishedAt))
+
+			allowFailStr := "No"
+			if job.AllowFailure {
+				allowFailStr = "Yes"
+			}
+			rightLines = append(rightLines, fmt.Sprintf("  Allow Failure:  %s", allowFailStr))
+
+			if job.FailureReason != "" {
+				rightLines = append(rightLines, "")
+				rightLines = append(rightLines, lipgloss.NewStyle().Foreground(colorError).Render(fmt.Sprintf("  Failure Reason: %s", job.FailureReason)))
+			}
+
+			rightLines = append(rightLines, "")
+			rightLines = append(rightLines, lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", rightW-2)))
+			rightLines = append(rightLines, "")
+			rightLines = append(rightLines, accentStyle.Render("  Press [Enter] to view trace/logs output"))
+			rightLines = append(rightLines, dimStyle.Render("  Press [r] to restart/retry this job"))
+		}
+	}
+
+	if len(rightLines) > bodyH {
+		rightLines = rightLines[:bodyH]
+	}
+	rightContent := strings.Join(rightLines, "\n")
+	rightPanel := lipgloss.NewStyle().Width(rightW).Height(bodyH).MaxHeight(bodyH).Render(rightContent)
+
+	return lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, sep, rightPanel)
 }
 
 func (m Model) viewIssueDetail() string {
@@ -2580,12 +2925,23 @@ func (m Model) viewDetailFooter() string {
 			}
 		}
 	case tabPipelines:
-		hints = []string{
-			keyHint("r", "retry"),
-			keyHint("c", "cancel"),
-			keyHint("o", "open link"),
-			keyHint("Esc", "back"),
-			keyHint("q", "quit"),
+		if m.jobTraceOpen {
+			hints = []string{
+				keyHint("j/k", "scroll trace"),
+				keyHint("Esc/Enter", "close trace"),
+				keyHint("q", "quit"),
+			}
+		} else {
+			hints = []string{
+				keyHint("j/k", "select job"),
+				keyHint("Enter", "view trace"),
+				keyHint("r", "retry job"),
+				keyHint("R", "retry pipeline"),
+				keyHint("c", "cancel pipeline"),
+				keyHint("o", "open link"),
+				keyHint("Esc", "back"),
+				keyHint("q", "quit"),
+			}
 		}
 	case tabIssues:
 		hints = []string{
@@ -2605,7 +2961,69 @@ func (m Model) viewDetailFooter() string {
 	return lipgloss.JoinVertical(lipgloss.Left, div, lipgloss.NewStyle().PaddingLeft(1).Render(bar))
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+func tickCmd() tea.Cmd {
+	return tea.Tick(5*time.Second, func(t time.Time) tea.Msg {
+		return tickMsg{}
+	})
+}
+
+func isPipelineOrJobsActive(pipeline *gitlab.PipelineInfo, jobs []*gitlab.JobInfo) bool {
+	if pipeline == nil {
+		return false
+	}
+	if isStatusActive(pipeline.Status) {
+		return true
+	}
+	for _, j := range jobs {
+		if isStatusActive(j.Status) {
+			return true
+		}
+	}
+	return false
+}
+
+func isStatusActive(status string) bool {
+	switch status {
+	case "running", "pending", "created", "waiting_for_resource", "preparing":
+		return true
+	default:
+		return false
+	}
+}
+
+func (m Model) getBodyHeight() int {
+	header := lipgloss.NewStyle().Width(m.width).MaxHeight(1).Render(m.viewHeader())
+	footer := lipgloss.NewStyle().Width(m.width).Render(m.viewDetailFooter())
+	bodyH := m.height - lipgloss.Height(header) - lipgloss.Height(footer) - m.getHeightOffset()
+	if bodyH < 1 {
+		return 1
+	}
+	return bodyH
+}
+
+func (m Model) cmdOpenTraceInEditor() tea.Cmd {
+	tmpFile, err := os.CreateTemp(".", "job-trace-*.log")
+	if err != nil {
+		return func() tea.Msg { return errMsg{err} }
+	}
+	if _, err := tmpFile.WriteString(m.jobTrace); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpFile.Name())
+		return func() tea.Msg { return errMsg{err} }
+	}
+	tmpFile.Close()
+
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = "vim"
+	}
+
+	c := exec.Command(editor, tmpFile.Name())
+	return tea.ExecProcess(c, func(err error) tea.Msg {
+		os.Remove(tmpFile.Name())
+		return youtrackTuiFinishedMsg{Err: err}
+	})
+}
 
 func truncate(s string, n int) string {
 	if len(s) <= n {

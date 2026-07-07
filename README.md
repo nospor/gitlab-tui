@@ -7,7 +7,7 @@ Built with [BubbleTea](https://github.com/charmbracelet/bubbletea) and the offic
 ## Features
 
 - 🔀 **Merge Requests** — list, filter by state (open/merged/closed), view details, approve, merge, close
-- 🚀 **Pipelines** — list, view details, retry, cancel
+- 🚀 **Pipelines** — list, view details (with dual-pane layout showing jobs and statuses), automatic background refresh (every 5s) for active pipelines, retry/cancel pipelines, restart individual jobs, scroll/search job trace logs, and open traces directly in your external editor
 - 🐛 **Issues** — list, view details
 - 📁 **Projects** — browse and switch projects on the current server
 - 🔌 **Multiple servers** — configure several GitLab instances, switch between them
@@ -118,12 +118,21 @@ Both SSH and HTTPS remotes are supported:
 
 ### Pipeline detail
 
-| Key   | Action             |
-| ----- | ------------------ |
-| `r`   | Retry pipeline     |
-| `c`   | Cancel pipeline    |
-| `o`   | Open link selector |
-| `Esc` | Back to list       |
+| Key          | Action                                                                   |
+| ------------ | ------------------------------------------------------------------------ |
+| `j` / `k`    | Select job / Navigate jobs list                                          |
+| `Enter`      | View trace/log output for the selected job                               |
+| `r`          | Restart/retry selected job (requires confirmation)                        |
+| `R`          | Retry entire pipeline                                                    |
+| `c`          | Cancel pipeline                                                          |
+| `o`          | Open link selector                                                       |
+| `Esc`        | Back to list (or close trace view if open)                               |
+
+**Inside trace view:**
+- `j` / `k` (or down/up): Scroll trace log lines
+- `g` / `G`: Scroll trace to top / bottom
+- `Ctrl+G`: Open trace in external editor (reads `$EDITOR`, falls back to `vim`)
+- `Esc` / `Enter` / `Tab`: Close trace view
 
 ### Issue detail
 
