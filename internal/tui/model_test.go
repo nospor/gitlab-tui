@@ -78,8 +78,8 @@ func TestInitTheme(t *testing.T) {
 	if colorBg != lipgloss.Color("#202020") {
 		t.Errorf("expected Teams bg to be #202020, got %v", colorBg)
 	}
-	if colorAccent != lipgloss.Color("#5f87ff") {
-		t.Errorf("expected Teams accent to be #5f87ff, got %v", colorAccent)
+	if colorAccent != lipgloss.Color("#00d75f") {
+		t.Errorf("expected Teams accent to be #00d75f, got %v", colorAccent)
 	}
 
 	// Reset to default

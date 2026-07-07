@@ -25,6 +25,7 @@ var (
 	colorTeal        = lipgloss.Color("#14b8a6")
 	colorPink        = lipgloss.Color("#ec4899")
 	colorBgPanelANSI = "\x1b[48;2;22;27;34m"
+	colorTitleFg     = lipgloss.Color("#ffffff")
 )
 
 // ─── Base styles ─────────────────────────────────────────────────────────────
@@ -59,7 +60,7 @@ func InitTheme(themeName string) {
 		colorBgPanel = lipgloss.Color("#303030")
 		colorBgHover = lipgloss.Color("#404040")
 		colorBorder = lipgloss.Color("#00d75f")
-		colorAccent = lipgloss.Color("#5f87ff")
+		colorAccent = lipgloss.Color("#00d75f")
 		colorAccentAlt = lipgloss.Color("#00d7d7")
 		colorSuccess = lipgloss.Color("#00d75f")
 		colorWarning = lipgloss.Color("#ffd700")
@@ -72,6 +73,7 @@ func InitTheme(themeName string) {
 		colorTeal = lipgloss.Color("#00d7d7")
 		colorPink = lipgloss.Color("#ff8700")
 		colorBgPanelANSI = "\x1b[48;2;48;48;48m"
+		colorTitleFg = lipgloss.Color("#202020")
 
 	default: // "catppuccin" or empty/default
 		colorBg = lipgloss.Color("#0d1117")
@@ -91,6 +93,7 @@ func InitTheme(themeName string) {
 		colorTeal = lipgloss.Color("#14b8a6")
 		colorPink = lipgloss.Color("#ec4899")
 		colorBgPanelANSI = "\x1b[48;2;22;27;34m"
+		colorTitleFg = lipgloss.Color("#ffffff")
 	}
 
 	baseStyle = lipgloss.NewStyle().
@@ -104,7 +107,7 @@ func InitTheme(themeName string) {
 
 	titleBarStyle = lipgloss.NewStyle().
 		Background(colorAccent).
-		Foreground(lipgloss.Color("#ffffff")).
+		Foreground(colorTitleFg).
 		Bold(true).
 		Padding(0, 2)
 
