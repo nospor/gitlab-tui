@@ -223,6 +223,8 @@ type Model struct {
 
 // New creates the root model.
 func New(cfg *config.Config, serverIdx int, client *gitlab.Client, project *gitlab.ProjectInfo, startupWarn string, initialMRIID int, initialPipelineID int, initialJobID int64) Model {
+	InitTheme(cfg.Theme)
+
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(colorAccent)

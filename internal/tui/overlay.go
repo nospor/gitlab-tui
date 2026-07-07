@@ -121,7 +121,7 @@ func overlayLines(bgLine, fgLine string, startX, width int) string {
 		if col >= 0 {
 			style := cell.style
 			if !styleHasBackground(style) {
-				style = style + "\x1b[48;2;22;27;34m"
+				style = style + colorBgPanelANSI
 			}
 			bgGrid[col] = gridCell{r: cell.r, style: style}
 			for w := 1; w < cell.width; w++ {

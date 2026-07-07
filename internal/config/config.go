@@ -33,6 +33,7 @@ type Config struct {
 	YouTrackServers []YouTrackServer `json:"youtrack_servers,omitempty"`
 	BrowserCommand  string           `json:"browser_command,omitempty"`
 	YouTrackCommand string           `json:"youtrack_command,omitempty"`
+	Theme           string           `json:"theme,omitempty"`
 }
 
 // ConfigPath returns the path to the config file.
@@ -62,8 +63,16 @@ func Load() (*Config, error) {
 	}
 
 	// Fill in defaults and persist so the user can see available options.
+	dirty := false
 	if cfg.BrowserCommand == "" {
 		cfg.BrowserCommand = defaultBrowserCommand
+		dirty = true
+	}
+	if cfg.Theme == "" {
+		cfg.Theme = "catppuccin"
+		dirty = true
+	}
+	if dirty {
 		if err := Save(&cfg); err != nil {
 			return nil, fmt.Errorf("saving defaults: %w", err)
 		}
@@ -102,6 +111,7 @@ func EnsureDefaultConfig() error {
 			},
 		},
 		BrowserCommand: defaultBrowserCommand,
+		Theme:          "catppuccin",
 	}
 	return Save(&sample)
 }

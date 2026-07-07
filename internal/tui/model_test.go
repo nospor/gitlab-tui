@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
 	"gitlab-tui/internal/config"
 )
 
@@ -60,4 +61,27 @@ func TestExtractYouTrackLinks(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestInitTheme(t *testing.T) {
+	// Test Catppuccin theme (default)
+	InitTheme("catppuccin")
+	if colorBg != lipgloss.Color("#0d1117") {
+		t.Errorf("expected Catppuccin bg to be #0d1117, got %v", colorBg)
+	}
+	if colorAccent != lipgloss.Color("#7c3aed") {
+		t.Errorf("expected Catppuccin accent to be #7c3aed, got %v", colorAccent)
+	}
+
+	// Test Teams theme
+	InitTheme("teams")
+	if colorBg != lipgloss.Color("#202020") {
+		t.Errorf("expected Teams bg to be #202020, got %v", colorBg)
+	}
+	if colorAccent != lipgloss.Color("#5f87ff") {
+		t.Errorf("expected Teams accent to be #5f87ff, got %v", colorAccent)
+	}
+
+	// Reset to default
+	InitTheme("catppuccin")
 }

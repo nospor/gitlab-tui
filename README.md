@@ -14,6 +14,7 @@ Built with [BubbleTea](https://github.com/charmbracelet/bubbletea) and the offic
 - 🧠 **Auto-detection** — detects server and project from the current directory's `git remote`
 - 🔗 **Open links** — press `o` on MR, pipeline, or issue detail to see all links (WebURL, links in descriptions and comments) and open them in your browser
 - 🎫 **YouTrack integration** — automatically parses issue tracker keys (like `PROJ-XXXX`) in descriptions and comments, resolving them to YouTrack URLs inside the link selection menu
+- 🎨 **Themes** — support for `"catppuccin"` (default dark theme with purple/indigo accents) and `"teams"` (green borders, dark grey panels, purple highlights)
 
 ## Installation
 
@@ -84,7 +85,8 @@ Edit it to add your servers:
     }
   ],
   "browser_command": "xdg-open",
-  "youtrack_command": "yt-tui"
+  "youtrack_command": "yt-tui",
+  "theme": "catppuccin"
 }
 ```
 
@@ -94,6 +96,7 @@ Edit it to add your servers:
 | `youtrack_servers` | —            | List of YouTrack server configurations to resolve ticket keys to URLs (each server has `name`, `url`, and a list of `projects`)            |
 | `browser_command`  | `"xdg-open"` | Command to open URLs (e.g. `"firefox"`, `"google-chrome"`, `"brave-browser"`). Leave as `"xdg-open"` to use your system default browser. |
 | `youtrack_command` | —            | Command to open YouTrack URLs specifically (e.g. [`yt-tui`](https://github.com/nospor/yt-tui)). When set, any URL belonging to a configured YouTrack server is opened via this command instead of `browser_command`. |
+| `theme`            | `"catppuccin"`| TUI theme. Supported values: `"catppuccin"` (default) or `"teams"` (green borders, dark grey panels, purple highlights). |
 
 You need a **Personal Access Token** with at least `api` scope. Create one at:
 `https://gitlab.com/-/user_settings/personal_access_tokens`
