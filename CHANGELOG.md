@@ -1,4 +1,14 @@
 
+## [0.5.6] - 2026-07-08
+
+### Bug Fixes
+
+- *(tui)* Prevent footer help bar from disappearing after popups ([0e3ce50](https://github.com/nospor/gitlab-tui/commit/0e3ce5073d6bf586e61f67db444792fbdd7c0dc1))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.5.5 [skip ci] ([f1cab6d](https://github.com/nospor/gitlab-tui/commit/f1cab6dfcf2d6970a6982b8ae6ecc92cf2a52b25))
+
 ## [0.5.5] - 2026-07-07
 
 ### Bug Fixes
