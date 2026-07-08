@@ -1832,10 +1832,11 @@ func (m Model) viewLoading() string {
 	dlgWidth := lipgloss.Width(box)
 	dlgHeight := lipgloss.Height(box)
 
+	targetHeight := m.height - m.getHeightOffset()
 	startX := (m.width - dlgWidth) / 2
-	startY := (m.height - dlgHeight) / 2
+	startY := (targetHeight - dlgHeight) / 2
 
-	return overlay(bg, box, m.width, m.height, startX, startY)
+	return overlay(bg, box, m.width, targetHeight, startX, startY)
 }
 
 // ─── Error screen ─────────────────────────────────────────────────────────────
@@ -1864,10 +1865,11 @@ func (m Model) viewError() string {
 	dlgWidth := lipgloss.Width(box)
 	dlgHeight := lipgloss.Height(box)
 
+	targetHeight := m.height - m.getHeightOffset()
 	startX := (m.width - dlgWidth) / 2
-	startY := (m.height - dlgHeight) / 2
+	startY := (targetHeight - dlgHeight) / 2
 
-	return overlay(bg, box, m.width, m.height, startX, startY)
+	return overlay(bg, box, m.width, targetHeight, startX, startY)
 }
 
 // ─── Main view ────────────────────────────────────────────────────────────────
@@ -2798,9 +2800,10 @@ func (m Model) viewServerSelect() string {
 	bg := m.viewBackground()
 	dlgWidth := lipgloss.Width(box)
 	dlgHeight := lipgloss.Height(box)
+	targetHeight := m.height - m.getHeightOffset()
 	startX := (m.width - dlgWidth) / 2
-	startY := (m.height - dlgHeight) / 2
-	return overlay(bg, box, m.width, m.height, startX, startY)
+	startY := (targetHeight - dlgHeight) / 2
+	return overlay(bg, box, m.width, targetHeight, startX, startY)
 }
 
 
@@ -2825,9 +2828,10 @@ func (m Model) viewLinkSelect() string {
 	bg := m.viewBackground()
 	dlgWidth := lipgloss.Width(box)
 	dlgHeight := lipgloss.Height(box)
+	targetHeight := m.height - m.getHeightOffset()
 	startX := (m.width - dlgWidth) / 2
-	startY := (m.height - dlgHeight) / 2
-	return overlay(bg, box, m.width, m.height, startX, startY)
+	startY := (targetHeight - dlgHeight) / 2
+	return overlay(bg, box, m.width, targetHeight, startX, startY)
 }
 
 // ─── Comment composer overlay ─────────────────────────────────────────────────
@@ -2878,9 +2882,10 @@ func (m Model) viewCommentComposer() string {
 	bg := m.viewBackground()
 	dlgWidth := lipgloss.Width(box)
 	dlgHeight := lipgloss.Height(box)
+	targetHeight := m.height - m.getHeightOffset()
 	startX := (m.width - dlgWidth) / 2
-	startY := (m.height - dlgHeight) / 2
-	return overlay(bg, box, m.width, m.height, startX, startY)
+	startY := (targetHeight - dlgHeight) / 2
+	return overlay(bg, box, m.width, targetHeight, startX, startY)
 }
 
 // ─── Confirm dialog ───────────────────────────────────────────────────────────
@@ -2904,9 +2909,10 @@ func (m Model) viewConfirm() string {
 	bg := m.viewBackground()
 	dlgWidth := lipgloss.Width(box)
 	dlgHeight := lipgloss.Height(box)
+	targetHeight := m.height - m.getHeightOffset()
 	startX := (m.width - dlgWidth) / 2
-	startY := (m.height - dlgHeight) / 2
-	return overlay(bg, box, m.width, m.height, startX, startY)
+	startY := (targetHeight - dlgHeight) / 2
+	return overlay(bg, box, m.width, targetHeight, startX, startY)
 }
 
 // ─── Footer / help bar ────────────────────────────────────────────────────────
