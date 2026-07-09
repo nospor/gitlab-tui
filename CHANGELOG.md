@@ -1,4 +1,14 @@
 
+## [0.5.7] - 2026-07-09
+
+### Bug Fixes
+
+- *(tui)* Show inline comments created as individual notes in diff view ([20af146](https://github.com/nospor/gitlab-tui/commit/20af146e7ad6fd9c4dca9f6b066541e962d859f7))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.5.6 [skip ci] ([2b8a087](https://github.com/nospor/gitlab-tui/commit/2b8a087f67c7ecd963bc2015df605d0daf4150b9))
+
 ## [0.5.6] - 2026-07-08
 
 ### Bug Fixes
