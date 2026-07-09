@@ -1192,9 +1192,6 @@ func (m Model) getScreenLinesForRange(f *gitlab.DiffFile, start, end int, panelW
 func (m Model) getDiscussionsForLine(f *gitlab.DiffFile, dl gitlab.DiffLine) []*gitlab.MRDiscussion {
 	var matches []*gitlab.MRDiscussion
 	for _, d := range m.mrDiscussions {
-		if d.IndividualNote {
-			continue
-		}
 		if len(d.Notes) == 0 {
 			continue
 		}
