@@ -7,6 +7,7 @@ import (
 	"time"
 
 	gl "gitlab.com/gitlab-org/api/client-go"
+	htmltomarkdown "https://github.com/JohannesKaufmann/html-to-markdown/v2"
 )
 
 // ─── MR Diffs ─────────────────────────────────────────────────────────────────
@@ -235,9 +236,10 @@ func (c *Client) GetMRDiscussions(projectID, mriid int) ([]*MRDiscussion, error)
 			IndividualNote: d.IndividualNote,
 		}
 		for _, n := range d.Notes {
+			markdown, _ := htmltomarkdown.ConvertString(n.Body)
 			note := &MRNote{
 				ID:     n.ID,
-				Body:   ConvertHTMLToMarkdown(n.Body),
+				Body:   markdown,
 				System: n.System,
 			}
 			note.Author = n.Author.Username
