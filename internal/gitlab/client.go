@@ -170,12 +170,22 @@ func splitLines(s string) []string {
 	start := 0
 	for i := 0; i < len(s); i++ {
 		if s[i] == '\n' {
-			out = append(out, s[start:i])
+			line := s[start:i]
+			// Strip \r so that CRLF line-endings in diffs don't emit a
+			// carriage-return to the terminal and overwrite other columns.
+			if len(line) > 0 && line[len(line)-1] == '\r' {
+				line = line[:len(line)-1]
+			}
+			out = append(out, line)
 			start = i + 1
 		}
 	}
 	if start < len(s) {
-		out = append(out, s[start:])
+		line := s[start:]
+		if len(line) > 0 && line[len(line)-1] == '\r' {
+			line = line[:len(line)-1]
+		}
+		out = append(out, line)
 	}
 	return out
 }

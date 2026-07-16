@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"gitlab-tui/internal/config"
 	"gitlab-tui/internal/gitlab"
@@ -2198,7 +2199,15 @@ func (m Model) viewMRDetailSplit(bodyH int) string {
 		end = totalLines
 	}
 
-	clippedLeftContent := strings.Join(leftLines[offset:end], "\n")
+	// Truncate each line to leftW display columns before joining.
+	// This prevents lipgloss from wrapping overlong ANSI-coloured lines,
+	// which would create extra rows and break the vertical separator alignment.
+	slice := leftLines[offset:end]
+	truncated := make([]string, len(slice))
+	for i, l := range slice {
+		truncated[i] = ansi.Truncate(l, leftW, "")
+	}
+	clippedLeftContent := strings.Join(truncated, "\n")
 	left := lipgloss.NewStyle().Width(leftW).Height(bodyH).MaxHeight(bodyH).Render(clippedLeftContent)
 
 	// Separator
@@ -2279,13 +2288,13 @@ func (m Model) viewDiffPanel(w, h int) string {
 		dl := f.Lines[i]
 		selected := i == m.mrDiffLineCursor
 		content := dl.Content
-		// Clip to panel width
+		// Clip to panel width (use display-width, not byte length)
 		avail := w - 5
 		if avail < 1 {
 			avail = 1
 		}
-		if len(content) > avail {
-			content = content[:avail] + "…"
+		if lipgloss.Width(content) > avail {
+			content = ansi.Truncate(content, avail-1, "…")
 		}
 
 		var rendered string
@@ -3257,8 +3266,9 @@ func truncateLines(s string, maxLines, maxWidth int) string {
 			result = append(result, dimStyle.Render("… (truncated)"))
 			break
 		}
-		if len(l) > maxWidth {
-			l = l[:maxWidth-1] + "…"
+		// Use display width (not byte length) for correct truncation of multi-byte chars
+		if lipgloss.Width(l) > maxWidth {
+			l = ansi.Truncate(l, maxWidth-1, "…")
 		}
 		result = append(result, l)
 	}
