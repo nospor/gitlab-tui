@@ -28,12 +28,12 @@ func TestConvertHTMLToMarkdown(t *testing.T) {
 		{
 			name:  "List with link and attributes",
 			input: `<ul class="commits-list"><li class="commit"><a href="/proj/commit/1234">1234</a> - feat: done</li></ul>`,
-			want:  "- 1234 - feat: done",
+			want:  "- [1234](/proj/commit/1234) \\- feat: done",
 		},
 		{
 			name:  "Formatted text tags",
 			input: "This is <strong>bold</strong>, <em>italic</em>, <code>code</code>, and <s>deleted</s>.",
-			want:  "This is **bold**, *italic*, `code`, and ~~deleted~~.",
+			want:  "This is **bold**, _italic_, `code`, and ~~deleted~~.",
 		},
 		{
 			name:  "Paragraphs and line breaks",
@@ -43,7 +43,7 @@ func TestConvertHTMLToMarkdown(t *testing.T) {
 		{
 			name:  "Pre and Code block",
 			input: "Look at this:<pre><code>func main() {}</code></pre>end",
-			want:  "Look at this:\n\n```\n`func main() {}`\n```\n\nend",
+			want:  "Look at this:\n\n```\nfunc main() {}\n```\n\nend",
 		},
 		{
 			name:  "Nested lists",
