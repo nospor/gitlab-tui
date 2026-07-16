@@ -1,4 +1,14 @@
 
+## [0.5.9] - 2026-07-16
+
+### Refactor
+
+- *(gitlab)* Replace hand-rolled HTML parser with html-to-markdown library ([3bcdd4d](https://github.com/nospor/gitlab-tui/commit/3bcdd4dac4f6b6b1d59a39a4d91fbb1749c6d163))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.5.8 [skip ci] ([ac4c877](https://github.com/nospor/gitlab-tui/commit/ac4c8772d4ba298ffa063338e558712ac400bc52))
+
 ## [0.5.8] - 2026-07-16
 
 ### Features
