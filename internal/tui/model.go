@@ -919,6 +919,10 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 		case "r":
 			if len(m.pipelineJobs) > 0 && m.jobCursor < len(m.pipelineJobs) {
 				job := m.pipelineJobs[m.jobCursor]
+				if job.Status == "manual" {
+					return m.promptConfirm("Play Job", fmt.Sprintf("Play manual job '%s'?", job.Name),
+						m.cmdPlayJob(job.ID))
+				}
 				return m.promptConfirm("Retry Job", fmt.Sprintf("Retry job '%s'?", job.Name),
 					m.cmdRetryJob(job.ID))
 			}
@@ -1652,6 +1656,20 @@ func (m Model) cmdRetryJob(jobID int64) tea.Cmd {
 			return errMsg{err}
 		}
 		return actionDoneMsg{fmt.Sprintf("Job #%d retried successfully", jobID)}
+	}
+}
+
+func (m Model) cmdPlayJob(jobID int64) tea.Cmd {
+	if m.project == nil {
+		return nil
+	}
+	pid := m.project.ID
+	return func() tea.Msg {
+		err := m.client.PlayJob(pid, jobID)
+		if err != nil {
+			return errMsg{err}
+		}
+		return actionDoneMsg{fmt.Sprintf("Job #%d started successfully", jobID)}
 	}
 }
 
@@ -2711,7 +2729,11 @@ func (m Model) viewPipelineDetail(bodyH int) string {
 			rightLines = append(rightLines, lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", rightW-2)))
 			rightLines = append(rightLines, "")
 			rightLines = append(rightLines, accentStyle.Render("  Press [Enter] to view trace/logs output"))
-			rightLines = append(rightLines, dimStyle.Render("  Press [r] to restart/retry this job"))
+			if job.Status == "manual" {
+				rightLines = append(rightLines, dimStyle.Render("  Press [r] to play/trigger this manual job"))
+			} else {
+				rightLines = append(rightLines, dimStyle.Render("  Press [r] to restart/retry this job"))
+			}
 		}
 	}
 

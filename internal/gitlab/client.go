@@ -770,6 +770,12 @@ func (c *Client) RetryJob(projectID int, jobID int64) error {
 	return err
 }
 
+// PlayJob plays/triggers a manual job of a project.
+func (c *Client) PlayJob(projectID int, jobID int64) error {
+	_, _, err := c.raw.Jobs.PlayJob(projectID, jobID, nil)
+	return err
+}
+
 // GetJobPipelineID fetches the pipeline ID for a given job.
 func (c *Client) GetJobPipelineID(projectID int, jobID int64) (int, error) {
 	job, _, err := c.raw.Jobs.GetJob(projectID, jobID)
