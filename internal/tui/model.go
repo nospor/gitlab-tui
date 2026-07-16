@@ -295,6 +295,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.updateDiffScroll()
+		m.clampMRDetailScroll()
 		return m, nil
 
 	case spinner.TickMsg:
@@ -390,6 +391,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case mrDiscussionsLoadedMsg:
 		m.mrDiscussions = msg.discussions
+		m.clampMRDetailScroll()
 		return m, nil
 
 	case pipelineLoadedMsg:
@@ -813,11 +815,11 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 		switch key {
 		case "j", "down":
 			m.mrDetailScrollOffset++
+			m.clampMRDetailScroll()
 			return m, nil
 		case "k", "up":
-			if m.mrDetailScrollOffset > 0 {
-				m.mrDetailScrollOffset--
-			}
+			m.mrDetailScrollOffset--
+			m.clampMRDetailScroll()
 			return m, nil
 		case "tab":
 			// Toggle diff panel
@@ -2177,32 +2179,55 @@ func (m Model) viewMRDetailSplit(bodyH int) string {
 		leftW = 20
 	}
 
-	// Left: existing MR detail (narrower), clipped to bodyH lines to prevent terminal scrolling
-	leftContent := m.viewMRDetailForWidth(leftW)
-	leftLines := strings.Split(leftContent, "\n")
+	headerLines, commentLines := m.viewMRDetailLinesForWidth(leftW)
+	var slice []string
+	H := len(headerLines)
+	C := len(commentLines)
 
-	totalLines := len(leftLines)
-	maxScroll := totalLines - bodyH
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
-	offset := m.mrDetailScrollOffset
-	if offset > maxScroll {
-		offset = maxScroll
-	}
-	if offset < 0 {
-		offset = 0
-	}
-
-	end := offset + bodyH
-	if end > totalLines {
-		end = totalLines
+	if H >= bodyH {
+		// combined scrolling
+		combinedLines := append(headerLines, commentLines...)
+		totalLines := len(combinedLines)
+		maxScroll := totalLines - bodyH
+		if maxScroll < 0 {
+			maxScroll = 0
+		}
+		offset := m.mrDetailScrollOffset
+		if offset > maxScroll {
+			offset = maxScroll
+		}
+		if offset < 0 {
+			offset = 0
+		}
+		end := offset + bodyH
+		if end > totalLines {
+			end = totalLines
+		}
+		slice = combinedLines[offset:end]
+	} else {
+		// comment-only scrolling
+		commentsHeight := bodyH - H
+		maxScroll := C - commentsHeight
+		if maxScroll < 0 {
+			maxScroll = 0
+		}
+		offset := m.mrDetailScrollOffset
+		if offset > maxScroll {
+			offset = maxScroll
+		}
+		if offset < 0 {
+			offset = 0
+		}
+		end := offset + commentsHeight
+		if end > C {
+			end = C
+		}
+		slice = append(headerLines, commentLines[offset:end]...)
 	}
 
 	// Truncate each line to leftW display columns before joining.
 	// This prevents lipgloss from wrapping overlong ANSI-coloured lines,
 	// which would create extra rows and break the vertical separator alignment.
-	slice := leftLines[offset:end]
 	truncated := make([]string, len(slice))
 	for i, l := range slice {
 		truncated[i] = ansi.Truncate(l, leftW, "")
@@ -2381,34 +2406,66 @@ func (m Model) viewDiffPanel(w, h int) string {
 }
 
 func (m Model) viewMRDetail(bodyH int) string {
-	content := m.viewMRDetailForWidth(m.width)
-	lines := strings.Split(content, "\n")
+	headerLines, commentLines := m.viewMRDetailLinesForWidth(m.width)
+	H := len(headerLines)
+	C := len(commentLines)
 
-	totalLines := len(lines)
-	maxScroll := totalLines - bodyH
-	if maxScroll < 0 {
-		maxScroll = 0
+	if H >= bodyH {
+		// combined scrolling
+		combinedLines := append(headerLines, commentLines...)
+		totalLines := len(combinedLines)
+		maxScroll := totalLines - bodyH
+		if maxScroll < 0 {
+			maxScroll = 0
+		}
+		offset := m.mrDetailScrollOffset
+		if offset > maxScroll {
+			offset = maxScroll
+		}
+		if offset < 0 {
+			offset = 0
+		}
+		end := offset + bodyH
+		if end > totalLines {
+			end = totalLines
+		}
+		return strings.Join(combinedLines[offset:end], "\n")
+	} else {
+		// comment-only scrolling
+		commentsHeight := bodyH - H
+		maxScroll := C - commentsHeight
+		if maxScroll < 0 {
+			maxScroll = 0
+		}
+		offset := m.mrDetailScrollOffset
+		if offset > maxScroll {
+			offset = maxScroll
+		}
+		if offset < 0 {
+			offset = 0
+		}
+		end := offset + commentsHeight
+		if end > C {
+			end = C
+		}
+		slice := append(headerLines, commentLines[offset:end]...)
+		return strings.Join(slice, "\n")
 	}
-	offset := m.mrDetailScrollOffset
-	if offset > maxScroll {
-		offset = maxScroll
-	}
-	if offset < 0 {
-		offset = 0
-	}
-
-	end := offset + bodyH
-	if end > totalLines {
-		end = totalLines
-	}
-
-	return strings.Join(lines[offset:end], "\n")
 }
 
 func (m Model) viewMRDetailForWidth(w int) string {
+	headerLines, commentLines := m.viewMRDetailLinesForWidth(w)
+	if headerLines == nil && commentLines == nil {
+		return ""
+	}
+	combined := append(headerLines, commentLines...)
+	return strings.Join(combined, "\n")
+}
+
+func (m Model) viewMRDetailLinesForWidth(w int) ([]string, []string) {
 	mr := m.mrDetail
 	if mr == nil {
-		return ""
+		return []string{""}, nil
 	}
 
 	inner := w - 4
@@ -2468,21 +2525,22 @@ func (m Model) viewMRDetailForWidth(w int) string {
 		diffBadge = "  " + dimStyle.Render("(loading changes...)")
 	}
 
-	lines := []string{
+	var headerRaw []string
+	headerRaw = append(headerRaw,
 		"",
 		lipgloss.NewStyle().PaddingLeft(2).Render(title),
 		lipgloss.NewStyle().PaddingLeft(2).Render(meta),
-	}
+	)
 	if assignees != "" {
-		lines = append(lines, lipgloss.NewStyle().PaddingLeft(2).Render(assignees))
+		headerRaw = append(headerRaw, lipgloss.NewStyle().PaddingLeft(2).Render(assignees))
 	}
 	if reviewers != "" {
-		lines = append(lines, lipgloss.NewStyle().PaddingLeft(2).Render(reviewers))
+		headerRaw = append(headerRaw, lipgloss.NewStyle().PaddingLeft(2).Render(reviewers))
 	}
 	if labels != "" {
-		lines = append(lines, lipgloss.NewStyle().PaddingLeft(2).Render(labels))
+		headerRaw = append(headerRaw, lipgloss.NewStyle().PaddingLeft(2).Render(labels))
 	}
-	lines = append(lines,
+	headerRaw = append(headerRaw,
 		lipgloss.NewStyle().PaddingLeft(2).Render(dimStyle.Render("Updated: "+mr.UpdatedAt+"  Created: "+mr.CreatedAt)),
 		lipgloss.NewStyle().PaddingLeft(2).Render(diffBadge),
 		"",
@@ -2495,16 +2553,13 @@ func (m Model) viewMRDetailForWidth(w int) string {
 		"",
 		lipgloss.NewStyle().PaddingLeft(2).Render(
 			lipgloss.NewStyle().Foreground(colorInfo).Render("🔗 "+mr.WebURL)),
+		"",
+		lipgloss.NewStyle().PaddingLeft(2).Render(subtitleStyle.Render("💬 Discussions & Comments")),
+		lipgloss.NewStyle().PaddingLeft(2).Render(divider),
 	)
 
-	// Append discussions/comments
+	var commentsRaw []string
 	if len(m.mrDiscussions) > 0 {
-		lines = append(lines,
-			"",
-			lipgloss.NewStyle().PaddingLeft(2).Render(subtitleStyle.Render("💬 Discussions & Comments")),
-			lipgloss.NewStyle().PaddingLeft(2).Render(divider),
-		)
-
 		for _, d := range m.mrDiscussions {
 			if len(d.Notes) == 0 {
 				continue
@@ -2556,20 +2611,65 @@ func (m Model) viewMRDetailForWidth(w int) string {
 					noteContent = strings.Join(blockLines, "\n")
 				}
 
-				lines = append(lines, lipgloss.NewStyle().PaddingLeft(2).Render(noteContent), "")
+				commentsRaw = append(commentsRaw, lipgloss.NewStyle().PaddingLeft(2).Render(noteContent), "")
 			}
-			lines = append(lines, lipgloss.NewStyle().PaddingLeft(2).Render(divider))
+			commentsRaw = append(commentsRaw, lipgloss.NewStyle().PaddingLeft(2).Render(divider))
 		}
 	} else {
-		lines = append(lines,
-			"",
-			lipgloss.NewStyle().PaddingLeft(2).Render(subtitleStyle.Render("💬 Discussions & Comments")),
-			lipgloss.NewStyle().PaddingLeft(2).Render(divider),
+		commentsRaw = append(commentsRaw,
 			lipgloss.NewStyle().PaddingLeft(2).Render(dimStyle.Italic(true).Render("No comments yet or loading...")),
 		)
 	}
 
-	return strings.Join(lines, "\n")
+	headerContent := strings.Join(headerRaw, "\n")
+	commentsContent := strings.Join(commentsRaw, "\n")
+
+	return strings.Split(headerContent, "\n"), strings.Split(commentsContent, "\n")
+}
+
+func (m Model) mrDetailMaxScroll(bodyH int) int {
+	mr := m.mrDetail
+	if mr == nil {
+		return 0
+	}
+	var w int
+	if m.mrDiffPanelOpen {
+		w = m.width * 2 / 5
+		if w < 20 {
+			w = 20
+		}
+	} else {
+		w = m.width
+	}
+	headerLines, commentLines := m.viewMRDetailLinesForWidth(w)
+	H := len(headerLines)
+	C := len(commentLines)
+
+	if H >= bodyH {
+		totalLines := H + C
+		maxScroll := totalLines - bodyH
+		if maxScroll < 0 {
+			return 0
+		}
+		return maxScroll
+	} else {
+		commentsHeight := bodyH - H
+		maxScroll := C - commentsHeight
+		if maxScroll < 0 {
+			return 0
+		}
+		return maxScroll
+	}
+}
+
+func (m *Model) clampMRDetailScroll() {
+	maxScroll := m.mrDetailMaxScroll(m.getBodyHeight())
+	if m.mrDetailScrollOffset > maxScroll {
+		m.mrDetailScrollOffset = maxScroll
+	}
+	if m.mrDetailScrollOffset < 0 {
+		m.mrDetailScrollOffset = 0
+	}
 }
 
 func (m Model) viewPipelineDetail(bodyH int) string {
