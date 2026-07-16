@@ -1,4 +1,14 @@
 
+## [0.5.8] - 2026-07-16
+
+### Features
+
+- *(tui)* Support triggering manual pipeline jobs with the `r` key ([2f56d1e](https://github.com/nospor/gitlab-tui/commit/2f56d1e187002d5c115cfd1da9fa8a6ade4962cb))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.5.7 [skip ci] ([5ae0fad](https://github.com/nospor/gitlab-tui/commit/5ae0fadb24d1be4fb8b204759fcb3e7ff1707e07))
+
 ## [0.5.7] - 2026-07-09
 
 ### Bug Fixes
