@@ -1,4 +1,22 @@
 
+## [0.6.0] - 2026-07-16
+
+### Bug Fixes
+
+- Strip \r from diff lines to prevent CRLF corruption in split view ([04066a1](https://github.com/nospor/gitlab-tui/commit/04066a136a2d8118114c710d84d33c83a0dbe105))
+
+            Diff content from files with Windows-style CRLF line endings left a
+            trailing \r in each DiffLine.Content. When rendered to the terminal the
+            \r caused a carriage-return, moving the cursor back to column 0 and
+            overwriting the vertical separator and left-panel content with
+            right-panel
+            diff text — producing visible "holes" in the border.
+- Improve MR details scrolling behavior ([9c377bd](https://github.com/nospor/gitlab-tui/commit/9c377bd801441c4ed6a6e7a9c3a86656b574c7d0))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.5.9 [skip ci] ([8a1bea0](https://github.com/nospor/gitlab-tui/commit/8a1bea09ee6afd9b4cb7d3371435da873e226835))
+
 ## [0.5.9] - 2026-07-16
 
 ### Refactor
