@@ -1,6 +1,8 @@
 BIN := gitlab-tui
 CMD := ./cmd/gitlab-tui
-INSTALL_DIR := /usr/local/bin
+PREFIX ?= /usr/local
+BINDIR ?= $(PREFIX)/bin
+INSTALL_DIR := $(DESTDIR)$(BINDIR)
 
 .PHONY: build install run clean
 

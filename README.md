@@ -18,11 +18,17 @@ Built with [BubbleTea](https://github.com/charmbracelet/bubbletea) and the offic
 
 ## Installation
 
+To build and install the binary:
+
 ```bash
+# Install to /usr/local/bin (may require sudo)
 make install
+
+# Or install to a custom path (e.g. ~/.local/bin) without sudo
+make install PREFIX=$HOME/.local
 ```
 
-Or just build:
+Or just build without installing:
 
 ```bash
 make build
