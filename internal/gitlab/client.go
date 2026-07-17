@@ -888,6 +888,85 @@ func (c *Client) ListIssues(projectID int, state IssueState, page int) ([]*Issue
 	return result, i64(resp.TotalPages), nil
 }
 
+// ─── Branches ────────────────────────────────────────────────────────────────
+
+// GetBranchLastCommit returns the title and body of the most recent commit on a branch.
+func (c *Client) GetBranchLastCommit(projectID int, branch string) (title, body string, err error) {
+	b, _, err := c.raw.Branches.GetBranch(projectID, branch)
+	if err != nil {
+		return "", "", fmt.Errorf("getting branch %q: %w", branch, err)
+	}
+	if b.Commit == nil {
+		return "", "", nil
+	}
+	return b.Commit.Title, b.Commit.Message, nil
+}
+
+// ListBranches returns all branch names for a project, ordered by last commit date.
+func (c *Client) ListBranches(projectID int) ([]string, error) {
+	var names []string
+	page := int64(1)
+	for {
+		opts := &gl.ListBranchesOptions{
+			ListOptions: gl.ListOptions{
+				Page:    page,
+				PerPage: 100,
+			},
+		}
+		branches, resp, err := c.raw.Branches.ListBranches(projectID, opts)
+		if err != nil {
+			return nil, fmt.Errorf("listing branches: %w", err)
+		}
+		for _, b := range branches {
+			names = append(names, b.Name)
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		page = resp.NextPage
+	}
+	return names, nil
+}
+
+// CreateMROptions holds all optional parameters for creating a merge request.
+type CreateMROptions struct {
+	Description        string
+	Draft              bool
+	RemoveSourceBranch bool
+	Squash             bool
+}
+
+// CreateMR creates a new merge request and returns basic info about it.
+func (c *Client) CreateMR(projectID int, sourceBranch, targetBranch, title string, opts CreateMROptions) (*MRInfo, error) {
+	finalTitle := title
+	if opts.Draft {
+		finalTitle = "Draft: " + title
+	}
+	o := &gl.CreateMergeRequestOptions{
+		Title:              &finalTitle,
+		SourceBranch:       &sourceBranch,
+		TargetBranch:       &targetBranch,
+		RemoveSourceBranch: &opts.RemoveSourceBranch,
+		Squash:             &opts.Squash,
+	}
+	if opts.Description != "" {
+		o.Description = &opts.Description
+	}
+	mr, _, err := c.raw.MergeRequests.CreateMergeRequest(projectID, o)
+	if err != nil {
+		return nil, fmt.Errorf("creating MR: %w", err)
+	}
+	info := &MRInfo{
+		IID:          int(mr.IID),
+		Title:        mr.Title,
+		State:        mr.State,
+		SourceBranch: mr.SourceBranch,
+		TargetBranch: mr.TargetBranch,
+		WebURL:       mr.WebURL,
+	}
+	return info, nil
+}
+
 // ─── Current User ─────────────────────────────────────────────────────────────
 
 // WhoAmI returns the username of the authenticated user.

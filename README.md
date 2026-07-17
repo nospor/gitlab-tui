@@ -6,7 +6,7 @@ Built with [BubbleTea](https://github.com/charmbracelet/bubbletea) and the offic
 
 ## Features
 
-- 🔀 **Merge Requests** — list, filter by state (open/merged/closed), view details, approve, merge, close
+- 🔀 **Merge Requests** — list, filter by state (open/merged/closed), view details, approve, merge, close, and **create new MRs** via an interactive wizard
 - 🚀 **Pipelines** — list, view details (with dual-pane layout showing jobs and statuses), automatic background refresh (every 5s) for active pipelines, retry/cancel pipelines, restart individual jobs, scroll/search job trace logs, and open traces directly in your external editor
 - 🐛 **Issues** — list, view details
 - 📁 **Projects** — browse and switch projects on the current server
@@ -122,6 +122,7 @@ Both SSH and HTTPS remotes are supported:
 | `k` / `↑`         | Move up                                        |
 | `Enter`           | Open detail / select project                   |
 | `s`               | Cycle MR state filter (open→merged→closed→all) |
+| `c`               | Create new MR (MR tab only)                    |
 | `r`               | Refresh current tab                            |
 | `n` / `p`         | Next / previous page                           |
 | `P`               | Switch project                                 |
@@ -141,6 +142,38 @@ Both SSH and HTTPS remotes are supported:
 | `+` / `-` | Vote up / down       |
 | `o`       | Open link selector   |
 | `Esc`     | Back to list         |
+
+### Create MR wizard
+
+Press `c` on the MR list tab to open the Create MR wizard. It guides you through three steps:
+
+**Step 1 — Source branch**
+Pick the branch you want to merge from. All project branches are shown in a scrollable list.
+
+**Step 2 — Target branch**
+Pick the destination branch. The source branch is excluded from the list. The repository's default branch is pre-selected.
+
+**Step 3 — Details form**
+
+| Field | Default | Notes |
+| ----- | ------- | ----- |
+| Title | Branch name (humanized) | Pre-filled from source branch name |
+| Mark as Draft | ☐ Off | Prefixes title with `Draft:` |
+| Description | Last commit body | Auto-fetched from the source branch's latest commit |
+| Delete source branch | ✓ On | Removes branch after merge |
+| Squash commits | ☐ Off | Squashes all commits on merge |
+
+**Form navigation:**
+
+| Key              | Action                              |
+| ---------------- | ----------------------------------- |
+| `Tab`            | Next field                          |
+| `Shift+Tab`      | Previous field                      |
+| `Space` / `Enter`| Toggle focused checkbox             |
+| `Ctrl+S`         | Submit and create the MR            |
+| `Esc`            | Go back one step (or cancel)        |
+
+> **Note:** When the Description textarea is focused, `Enter` inserts a newline. Use `Ctrl+S` to submit, or `Tab` / `Shift+Tab` to leave the textarea.
 
 ### Pipeline detail
 

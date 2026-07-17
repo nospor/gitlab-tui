@@ -61,6 +61,7 @@ const (
 	stateConfirm
 	stateComment
 	stateLinkSelect
+	stateCreateMR
 )
 
 // ─── Messages ─────────────────────────────────────────────────────────────────
@@ -106,6 +107,13 @@ type (
 	tickMsg struct{}
 	jobPipelineIDMsg struct {
 		pipelineID int
+	}
+	branchesLoadedMsg struct {
+		branches []string
+	}
+	commitMsgLoadedMsg struct {
+		title string
+		body  string
 	}
 )
 
@@ -218,6 +226,22 @@ type Model struct {
 
 	// Previous state for back navigation
 	prevState appState
+
+	// Create MR wizard
+	// createMRStep: 0=source branch, 1=target branch, 2=details form
+	// createMRFormField: 0=title, 1=draft, 2=description, 3=deleteBranch, 4=squash
+	createMRStep           int
+	createMRBranches       []string
+	createMRSrcCursor      int
+	createMRTgtCursor      int
+	createMRSourceBranch   string
+	createMRTargetBranch   string
+	createMRTitle          textinput.Model
+	createMRDescription    textarea.Model
+	createMRDraft          bool
+	createMRDeleteBranch   bool
+	createMRSquash         bool
+	createMRFormField      int // focused field index in step 2 form
 }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
@@ -255,6 +279,31 @@ func New(cfg *config.Config, serverIdx int, client *gitlab.Client, project *gitl
 	ci.BlurredStyle.CursorLine = ci.BlurredStyle.CursorLine.Background(colorBgPanel)
 	ci.BlurredStyle.EndOfBuffer = ci.BlurredStyle.EndOfBuffer.Background(colorBgPanel)
 
+	// Create MR title input
+	mrti := textinput.New()
+	mrti.Placeholder = "Enter MR title..."
+	mrti.CharLimit = 255
+	mrti.Width = 58
+
+	// Create MR description textarea
+	mrdi := textarea.New()
+	mrdi.Placeholder = "Enter description (optional)..."
+	mrdi.SetWidth(58)
+	mrdi.SetHeight(5)
+	mrdi.CharLimit = 5000
+	mrdi.Prompt = ""
+	mrdi.ShowLineNumbers = false
+	mrdi.FocusedStyle.Base = mrdi.FocusedStyle.Base.Background(colorBgPanel)
+	mrdi.FocusedStyle.Text = mrdi.FocusedStyle.Text.Background(colorBgPanel)
+	mrdi.FocusedStyle.Placeholder = mrdi.FocusedStyle.Placeholder.Background(colorBgPanel)
+	mrdi.FocusedStyle.CursorLine = mrdi.FocusedStyle.CursorLine.Background(colorBgPanel)
+	mrdi.FocusedStyle.EndOfBuffer = mrdi.FocusedStyle.EndOfBuffer.Background(colorBgPanel)
+	mrdi.BlurredStyle.Base = mrdi.BlurredStyle.Base.Background(colorBgPanel)
+	mrdi.BlurredStyle.Text = mrdi.BlurredStyle.Text.Background(colorBgPanel)
+	mrdi.BlurredStyle.Placeholder = mrdi.BlurredStyle.Placeholder.Background(colorBgPanel)
+	mrdi.BlurredStyle.CursorLine = mrdi.BlurredStyle.CursorLine.Background(colorBgPanel)
+	mrdi.BlurredStyle.EndOfBuffer = mrdi.BlurredStyle.EndOfBuffer.Background(colorBgPanel)
+
 	m := Model{
 		cfg:               cfg,
 		serverIdx:         serverIdx,
@@ -275,6 +324,8 @@ func New(cfg *config.Config, serverIdx int, client *gitlab.Client, project *gitl
 		projectPage:       1,
 		projectSearch:     ti,
 		commentInput:      ci,
+		createMRTitle:       mrti,
+		createMRDescription: mrdi,
 	}
 	return m
 }
@@ -496,10 +547,47 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case youtrackTuiFinishedMsg:
 		return m, tea.ClearScreen
 
+	case branchesLoadedMsg:
+		m.createMRBranches = msg.branches
+		// If only one source branch candidate was loaded, auto-select it
+		if m.state == stateCreateMR && m.createMRStep == 0 && len(m.createMRBranches) > 0 {
+			// pre-position cursor on a branch that has no open MR (best effort; just stay at 0)
+			m.createMRSrcCursor = 0
+		}
+		if m.state == stateCreateMR && m.createMRStep == 1 {
+			// Position target cursor at the default branch
+			defaultBranch := ""
+			if m.project != nil {
+				defaultBranch = m.project.DefaultBranch
+			}
+			for i, b := range m.createMRBranches {
+				if b == defaultBranch {
+					m.createMRTgtCursor = i
+					break
+				}
+			}
+		}
+		return m, nil
+
+	case commitMsgLoadedMsg:
+		// Pre-fill description with the last commit body (skip the title line)
+		body := msg.body
+		if idx := strings.Index(body, "\n"); idx >= 0 {
+			body = strings.TrimSpace(body[idx+1:])
+		} else {
+			body = ""
+		}
+		m.createMRDescription.SetValue(body)
+		return m, nil
+
 	case tea.KeyMsg:
 		// Comment input captures all keys
 		if m.state == stateComment {
 			return m.handleCommentKey(msg)
+		}
+		// Create MR wizard captures all keys
+		if m.state == stateCreateMR {
+			return m.handleCreateMRKey(msg)
 		}
 		if m.state == stateMain && m.tab == tabProjects && m.projectSearch.Focused() {
 			key := msg.String()
@@ -692,6 +780,11 @@ func (m Model) handleMainKey(key string) (tea.Model, tea.Cmd) {
 		return m.prevPage()
 	case "r":
 		return m, m.reloadCurrent()
+	case "c":
+		// Create new MR (only on MR tab)
+		if m.tab == tabMRs && m.project != nil {
+			return m.startCreateMR()
+		}
 	case "s":
 		// Switch MR state filter
 		if m.tab == tabMRs {
@@ -997,6 +1090,243 @@ func (m Model) handleCommentKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.commentInput, cmd = m.commentInput.Update(msg)
 		return m, cmd
 	}
+}
+
+// ─── Create MR wizard ─────────────────────────────────────────────────────────
+
+// createMR form field indices
+const (
+	mrFieldTitle       = 0
+	mrFieldDraft       = 1
+	mrFieldDescription = 2
+	mrFieldDeleteBranch = 3
+	mrFieldSquash      = 4
+	mrFieldCount       = 5
+)
+
+// startCreateMR resets the create-MR wizard state and transitions to stateCreateMR.
+func (m Model) startCreateMR() (Model, tea.Cmd) {
+	m.createMRStep = 0
+	m.createMRBranches = nil
+	m.createMRSrcCursor = 0
+	m.createMRTgtCursor = 0
+	m.createMRSourceBranch = ""
+	m.createMRTargetBranch = ""
+	m.createMRDraft = false
+	m.createMRDeleteBranch = true // default on
+	m.createMRSquash = false
+	m.createMRFormField = mrFieldTitle
+	m.createMRTitle.SetValue("")
+	m.createMRTitle.Blur()
+	m.createMRDescription.SetValue("")
+	m.createMRDescription.Blur()
+	m.prevState = m.state
+	m.state = stateCreateMR
+	return m, m.cmdLoadBranches()
+}
+
+func (m Model) handleCreateMRKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+
+	// Description textarea steals all keys except ctrl+s (submit) and esc
+	if m.createMRStep == 2 && m.createMRFormField == mrFieldDescription {
+		switch key {
+		case "ctrl+c":
+			return m, tea.Quit
+		case "esc":
+			// blur description, go back to title field
+			m.createMRDescription.Blur()
+			m.createMRFormField = mrFieldTitle
+			cmd := m.createMRTitle.Focus()
+			m.createMRTitle.CursorEnd()
+			return m, cmd
+		case "ctrl+s":
+			return m.submitCreateMR()
+		case "tab":
+			m.createMRDescription.Blur()
+			m.createMRFormField = mrFieldDeleteBranch
+			return m, nil
+		case "shift+tab":
+			m.createMRDescription.Blur()
+			m.createMRFormField = mrFieldDraft
+			return m, nil
+		default:
+			var cmd tea.Cmd
+			m.createMRDescription, cmd = m.createMRDescription.Update(msg)
+			return m, cmd
+		}
+	}
+
+	switch key {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		if m.createMRStep == 2 {
+			// go back to target branch selection
+			m.createMRTitle.Blur()
+			m.createMRDescription.Blur()
+			m.createMRStep = 1
+			return m, nil
+		}
+		if m.createMRStep == 1 {
+			m.createMRStep = 0
+			return m, nil
+		}
+		m.state = m.prevState
+		return m, nil
+	}
+
+	switch m.createMRStep {
+	case 0: // source branch selection
+		switch key {
+		case "j", "down":
+			if m.createMRSrcCursor < len(m.createMRBranches)-1 {
+				m.createMRSrcCursor++
+			}
+		case "k", "up":
+			if m.createMRSrcCursor > 0 {
+				m.createMRSrcCursor--
+			}
+		case "enter":
+			if len(m.createMRBranches) > 0 && m.createMRSrcCursor < len(m.createMRBranches) {
+				m.createMRSourceBranch = m.createMRBranches[m.createMRSrcCursor]
+				m.createMRStep = 1
+				m.createMRTgtCursor = 0
+				defaultBranch := ""
+				if m.project != nil {
+					defaultBranch = m.project.DefaultBranch
+				}
+				// Position target cursor on default branch in the filtered list
+				m.createMRTgtCursor = 0
+				for i, b := range m.mrTgtBranchList() {
+					if b == defaultBranch {
+						m.createMRTgtCursor = i
+						break
+					}
+				}
+			}
+		}
+
+	case 1: // target branch selection
+		tgtList := m.mrTgtBranchList()
+		switch key {
+		case "j", "down":
+			if m.createMRTgtCursor < len(tgtList)-1 {
+				m.createMRTgtCursor++
+			}
+		case "k", "up":
+			if m.createMRTgtCursor > 0 {
+				m.createMRTgtCursor--
+			}
+		case "enter":
+			if len(tgtList) > 0 && m.createMRTgtCursor < len(tgtList) {
+				m.createMRTargetBranch = tgtList[m.createMRTgtCursor]
+				m.createMRStep = 2
+				m.createMRFormField = mrFieldTitle
+				// Pre-fill title from source branch name
+				suggested := strings.NewReplacer("-", " ", "_", " ").Replace(m.createMRSourceBranch)
+				m.createMRTitle.SetValue(suggested)
+				titleCmd := m.createMRTitle.Focus()
+				m.createMRTitle.CursorEnd()
+				// Also kick off last-commit fetch to pre-fill description
+				return m, tea.Batch(titleCmd, m.cmdGetLastCommit(m.createMRSourceBranch))
+			}
+		}
+
+	case 2: // details form
+		switch key {
+		case "ctrl+s":
+			return m.submitCreateMR()
+
+		case "tab":
+			m.createMRFormField = (m.createMRFormField + 1) % mrFieldCount
+			return m.focusCreateMRField()
+
+		case "shift+tab":
+			m.createMRFormField = (m.createMRFormField - 1 + mrFieldCount) % mrFieldCount
+			return m.focusCreateMRField()
+
+		case "enter":
+			switch m.createMRFormField {
+			case mrFieldTitle:
+				// Tab to next field
+				m.createMRFormField = mrFieldDraft
+				return m.focusCreateMRField()
+			case mrFieldDraft:
+				m.createMRDraft = !m.createMRDraft
+			case mrFieldDeleteBranch:
+				m.createMRDeleteBranch = !m.createMRDeleteBranch
+			case mrFieldSquash:
+				m.createMRSquash = !m.createMRSquash
+			}
+
+		case " ":
+			// Toggle checkboxes with space
+			switch m.createMRFormField {
+			case mrFieldDraft:
+				m.createMRDraft = !m.createMRDraft
+			case mrFieldDeleteBranch:
+				m.createMRDeleteBranch = !m.createMRDeleteBranch
+			case mrFieldSquash:
+				m.createMRSquash = !m.createMRSquash
+			}
+
+		default:
+			if m.createMRFormField == mrFieldTitle {
+				var cmd tea.Cmd
+				m.createMRTitle, cmd = m.createMRTitle.Update(msg)
+				return m, cmd
+			}
+		}
+	}
+	return m, nil
+}
+
+// mrTgtBranchList returns all branches except the currently selected source branch.
+func (m Model) mrTgtBranchList() []string {
+	var list []string
+	for _, b := range m.createMRBranches {
+		if b != m.createMRSourceBranch {
+			list = append(list, b)
+		}
+	}
+	return list
+}
+
+// focusCreateMRField blurs all fields then focuses the current one.
+func (m Model) focusCreateMRField() (Model, tea.Cmd) {
+	m.createMRTitle.Blur()
+	m.createMRDescription.Blur()
+	switch m.createMRFormField {
+	case mrFieldTitle:
+		cmd := m.createMRTitle.Focus()
+		return m, cmd
+	case mrFieldDescription:
+		cmd := m.createMRDescription.Focus()
+		return m, cmd
+	}
+	return m, nil
+}
+
+// submitCreateMR validates and kicks off the API call.
+func (m Model) submitCreateMR() (Model, tea.Cmd) {
+	title := strings.TrimSpace(m.createMRTitle.Value())
+	if title == "" {
+		return m, nil
+	}
+	m.createMRTitle.Blur()
+	m.createMRDescription.Blur()
+	m.state = stateLoading
+	m.loadMsg = "Creating merge request..."
+	return m, m.cmdCreateMR(
+		m.createMRSourceBranch,
+		m.createMRTargetBranch,
+		title,
+		strings.TrimSpace(m.createMRDescription.Value()),
+		m.createMRDraft,
+		m.createMRDeleteBranch,
+		m.createMRSquash,
+	)
 }
 
 // ─── Server select key handler ────────────────────────────────────────────────
@@ -1790,6 +2120,54 @@ func (m Model) cmdVoteDownMR(iid int) tea.Cmd {
 	}
 }
 
+func (m Model) cmdLoadBranches() tea.Cmd {
+	if m.project == nil {
+		return nil
+	}
+	pid := m.project.ID
+	return func() tea.Msg {
+		branches, err := m.client.ListBranches(pid)
+		if err != nil {
+			return errMsg{err}
+		}
+		return branchesLoadedMsg{branches}
+	}
+}
+
+func (m Model) cmdGetLastCommit(branch string) tea.Cmd {
+	if m.project == nil {
+		return nil
+	}
+	pid := m.project.ID
+	return func() tea.Msg {
+		title, body, err := m.client.GetBranchLastCommit(pid, branch)
+		if err != nil {
+			return nil // non-fatal: just don't pre-fill
+		}
+		return commitMsgLoadedMsg{title: title, body: body}
+	}
+}
+
+func (m Model) cmdCreateMR(sourceBranch, targetBranch, title, description string, draft, deleteSourceBranch, squash bool) tea.Cmd {
+	if m.project == nil {
+		return nil
+	}
+	pid := m.project.ID
+	opts := gitlab.CreateMROptions{
+		Description:        description,
+		Draft:              draft,
+		RemoveSourceBranch: deleteSourceBranch,
+		Squash:             squash,
+	}
+	return func() tea.Msg {
+		mr, err := m.client.CreateMR(pid, sourceBranch, targetBranch, title, opts)
+		if err != nil {
+			return errMsg{err}
+		}
+		return actionDoneMsg{fmt.Sprintf("✅ MR !%d created: %s", mr.IID, mr.Title)}
+	}
+}
+
 // ─── View ─────────────────────────────────────────────────────────────────────
 
 func (m Model) View() string {
@@ -1810,6 +2188,8 @@ func (m Model) View() string {
 		return m.viewConfirm()
 	case stateComment:
 		return m.viewCommentComposer()
+	case stateCreateMR:
+		return m.viewCreateMR()
 	case stateDetail:
 		return m.viewDetail()
 	default:
@@ -1831,6 +2211,8 @@ func (m Model) viewBackground() string {
 		return m.viewConfirm()
 	case stateComment:
 		return m.viewCommentComposer()
+	case stateCreateMR:
+		return m.viewCreateMR()
 	case stateDetail:
 		return m.viewDetail()
 	default:
@@ -2936,6 +3318,192 @@ func (m Model) viewServerSelect() string {
 
 
 
+// ─── Create MR overlay ────────────────────────────────────────────────────────
+
+func (m Model) viewCreateMR() string {
+	var rows []string
+
+	switch m.createMRStep {
+	case 0:
+		rows = append(rows, subtitleStyle.Render("🔀 Create Merge Request"), "")
+		rows = append(rows, accentStyle.Render("Step 1/3: Select source branch"), "")
+
+		if len(m.createMRBranches) == 0 {
+			rows = append(rows, dimStyle.Render("  Loading branches..."))
+		} else {
+			// Show a scrollable window of branches centered on the cursor
+			maxVisible := 12
+			start := m.createMRSrcCursor - maxVisible/2
+			if start < 0 {
+				start = 0
+			}
+			end := start + maxVisible
+			if end > len(m.createMRBranches) {
+				end = len(m.createMRBranches)
+				start = end - maxVisible
+				if start < 0 {
+					start = 0
+				}
+			}
+			if start > 0 {
+				rows = append(rows, dimStyle.Render(fmt.Sprintf("  ↑ %d more", start)))
+			}
+			for i := start; i < end; i++ {
+				b := m.createMRBranches[i]
+				label := fmt.Sprintf("%-50s", truncate(b, 50))
+				if i == m.createMRSrcCursor {
+					rows = append(rows, selectedStyle.Render("▶ "+label))
+				} else {
+					rows = append(rows, normalItemStyle.Render("  "+label))
+				}
+			}
+			if end < len(m.createMRBranches) {
+				rows = append(rows, dimStyle.Render(fmt.Sprintf("  ↓ %d more", len(m.createMRBranches)-end)))
+			}
+		}
+		rows = append(rows, "", dimStyle.Render("↑↓ navigate  Enter select  Esc cancel"))
+
+	case 1:
+		rows = append(rows, subtitleStyle.Render("🔀 Create Merge Request"), "")
+		rows = append(rows, accentStyle.Render("Step 2/3: Select target branch"), "")
+		rows = append(rows, dimStyle.Render("Source: ")+accentStyle.Render(m.createMRSourceBranch), "")
+
+		defaultBranch := ""
+		if m.project != nil {
+			defaultBranch = m.project.DefaultBranch
+		}
+
+		tgtList := m.mrTgtBranchList()
+		if len(tgtList) == 0 {
+			rows = append(rows, dimStyle.Render("  Loading branches..."))
+		} else {
+			maxVisible := 12
+			start := m.createMRTgtCursor - maxVisible/2
+			if start < 0 {
+				start = 0
+			}
+			end := start + maxVisible
+			if end > len(tgtList) {
+				end = len(tgtList)
+				start = end - maxVisible
+				if start < 0 {
+					start = 0
+				}
+			}
+			if start > 0 {
+				rows = append(rows, dimStyle.Render(fmt.Sprintf("  ↑ %d more", start)))
+			}
+			for i := start; i < end; i++ {
+				b := tgtList[i]
+				label := truncate(b, 46)
+				suffix := ""
+				if b == defaultBranch {
+					suffix = accentStyle.Render(" (default)")
+				}
+				if i == m.createMRTgtCursor {
+					rows = append(rows, selectedStyle.Render("▶ "+fmt.Sprintf("%-46s", label))+suffix)
+				} else {
+					rows = append(rows, normalItemStyle.Render("  "+fmt.Sprintf("%-46s", label))+suffix)
+				}
+			}
+			if end < len(tgtList) {
+				rows = append(rows, dimStyle.Render(fmt.Sprintf("  ↓ %d more", len(tgtList)-end)))
+			}
+		}
+		rows = append(rows, "", dimStyle.Render("↑↓ navigate  Enter select  Esc=back"))
+
+	case 2:
+		rows = append(rows, subtitleStyle.Render("🔀 Create Merge Request"), "")
+		rows = append(rows, accentStyle.Render("Step 3/3: Details"), "")
+		rows = append(rows,
+			dimStyle.Render("Source: ")+accentStyle.Render(m.createMRSourceBranch)+
+				dimStyle.Render("  →  ")+accentStyle.Render(m.createMRTargetBranch),
+			"",
+		)
+
+		// helper to highlight field label when focused
+		fieldLabel := func(idx int, label string) string {
+			if m.createMRFormField == idx {
+				return accentStyle.Render("▶ " + label)
+			}
+			return dimStyle.Render("  " + label)
+		}
+		// helper for checkbox rendering
+		checkbox := func(checked bool) string {
+			if checked {
+				return successStyle.Render("[✓]")
+			}
+			return dimStyle.Render("[ ]")
+		}
+
+		// Title
+		titleBorderColor := colorBorder
+		if m.createMRFormField == mrFieldTitle {
+			titleBorderColor = colorAccent
+		}
+		titleBox := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(titleBorderColor).
+			Padding(0, 1).
+			Width(58).
+			MarginLeft(2).
+			Render(m.createMRTitle.View())
+		rows = append(rows, fieldLabel(mrFieldTitle, "Title:"))
+		rows = append(rows, titleBox)
+		rows = append(rows, "")
+
+		// Draft checkbox
+		rows = append(rows, fieldLabel(mrFieldDraft, "")+" "+checkbox(m.createMRDraft)+" Mark as Draft")
+		rows = append(rows, "")
+
+		// Description textarea
+		descBorderColor := colorBorder
+		if m.createMRFormField == mrFieldDescription {
+			descBorderColor = colorAccent
+		}
+		descBox := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(descBorderColor).
+			Padding(0, 1).
+			Width(58).
+			MarginLeft(2).
+			Render(m.createMRDescription.View())
+		rows = append(rows, fieldLabel(mrFieldDescription, "Description:"))
+		rows = append(rows, descBox)
+		rows = append(rows, "")
+
+		// Delete source branch checkbox
+		rows = append(rows, fieldLabel(mrFieldDeleteBranch, "")+" "+checkbox(m.createMRDeleteBranch)+" Delete source branch when MR is accepted")
+		rows = append(rows, "")
+
+		// Squash checkbox
+		rows = append(rows, fieldLabel(mrFieldSquash, "")+" "+checkbox(m.createMRSquash)+" Squash commits when MR is accepted")
+		rows = append(rows, "")
+
+		rows = append(rows, dimStyle.Render(
+			keyHint("Tab/Shift+Tab", "navigate fields")+"  "+
+				keyHint("Space/Enter", "toggle")+"  "+
+				keyHint("Ctrl+S", "create MR")+"  "+
+				keyHint("Esc", "back"),
+		))
+	}
+
+	box := panelStyle.Padding(1, 3).Render(strings.Join(rows, "\n"))
+
+	bg := m.viewBackground()
+	dlgWidth := lipgloss.Width(box)
+	dlgHeight := lipgloss.Height(box)
+	targetHeight := m.height - m.getHeightOffset()
+	startX := (m.width - dlgWidth) / 2
+	startY := (targetHeight - dlgHeight) / 2
+	if startY < 0 {
+		startY = 0
+	}
+	return overlay(bg, box, m.width, targetHeight, startX, startY)
+}
+
+
+
 // ─── Link select overlay ──────────────────────────────────────────────────────
 
 func (m Model) viewLinkSelect() string {
@@ -3057,6 +3625,9 @@ func (m Model) viewFooter() string {
 
 	if m.tab == tabMRs {
 		hints = append(hints, keyHint("s", "state:"+string(m.mrState)))
+		if m.project != nil {
+			hints = append(hints, keyHint("c", "create MR"))
+		}
 	}
 
 	if m.tab == tabProjects {
