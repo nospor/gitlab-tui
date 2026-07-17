@@ -1,4 +1,26 @@
 
+## [0.6.3] - 2026-07-17
+
+### Features
+
+- Add Create MR wizard to MR tab ([f468336](https://github.com/nospor/gitlab-tui/commit/f4683369a48daa8e684c0633dbf1073f9b30b1dd))
+- Add merge request editing in MR list and detail views ([7f66758](https://github.com/nospor/gitlab-tui/commit/7f667584931fea4d2164ca52ab8047d9c489c9e0))
+- *(tui)* Add MR pipelines display and jump navigation ([c56bb37](https://github.com/nospor/gitlab-tui/commit/c56bb37054d9663ae572e16d9fb3981c2832a24b))
+
+            - Fetch and display pipelines (MR pipelines, source branch pipelines,
+            head commit pipelines, and merge commit pipelines) on the Merge Request
+            details screen.
+            - Press 'p' to open a selection popup containing the list of pipelines.
+
+### Bug Fixes
+
+- Restore footer help bar in main view after closing edit popup ([128feb1](https://github.com/nospor/gitlab-tui/commit/128feb18c2e643d2f133b5b35953e4d78f25691b))
+- *(tui)* Align list columns by padding status badges to a fixed width ([6e7890d](https://github.com/nospor/gitlab-tui/commit/6e7890d8e9dc253b8333161831b35996ffa4308d))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.6.2 [skip ci] ([071712a](https://github.com/nospor/gitlab-tui/commit/071712a2a87b5c96c30146c8f923b481e3d5434b))
+
 ## [0.6.2] - 2026-07-17
 
 ### Bug Fixes
