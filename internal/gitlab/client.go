@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -469,6 +470,8 @@ type MRInfo struct {
 	Reviewers               []string
 	ForceRemoveSourceBranch bool
 	Squash                  bool
+	SHA                     string
+	MergeCommitSHA          string
 }
 
 // ListMRs lists merge requests for a project.
@@ -505,6 +508,8 @@ func (c *Client) ListMRs(projectID int, state MRState, page int) ([]*MRInfo, int
 			Draft:                   mr.Draft,
 			ForceRemoveSourceBranch: mr.ForceRemoveSourceBranch,
 			Squash:                  mr.Squash,
+			SHA:                     mr.SHA,
+			MergeCommitSHA:          mr.MergeCommitSHA,
 		}
 		if mr.Author != nil {
 			info.Author = mr.Author.Username
@@ -550,6 +555,8 @@ func (c *Client) GetMR(projectID, mriid int) (*MRInfo, error) {
 		Draft:                   mr.Draft,
 		ForceRemoveSourceBranch: mr.ForceRemoveSourceBranch,
 		Squash:                  mr.Squash,
+		SHA:                     mr.SHA,
+		MergeCommitSHA:          mr.MergeCommitSHA,
 	}
 	if mr.Author != nil {
 		info.Author = mr.Author.Username
@@ -678,6 +685,79 @@ func (c *Client) RetryPipeline(projectID, pipelineID int) error {
 func (c *Client) CancelPipeline(projectID, pipelineID int) error {
 	_, _, err := c.raw.Pipelines.CancelPipelineBuild(projectID, int64(pipelineID))
 	return err
+}
+
+// GetMRPipelines fetches pipelines for a merge request.
+func (c *Client) GetMRPipelines(projectID, mriid int, sourceBranch, sha, mergeCommitSHA string) ([]*PipelineInfo, error) {
+	var allPipelines []*gl.PipelineInfo
+
+	// 1. Try to fetch merge request pipelines
+	mrPipelines, _, err := c.raw.MergeRequests.ListMergeRequestPipelines(projectID, int64(mriid))
+	if err == nil {
+		allPipelines = append(allPipelines, mrPipelines...)
+	}
+
+	// 2. Fetch project pipelines for the source branch
+	if sourceBranch != "" {
+		branchPipelines, _, err := c.raw.Pipelines.ListProjectPipelines(projectID, &gl.ListProjectPipelinesOptions{
+			Ref: gl.Ptr(sourceBranch),
+		})
+		if err == nil {
+			allPipelines = append(allPipelines, branchPipelines...)
+		}
+	}
+
+	// 3. Fetch project pipelines for the commit head SHA
+	if sha != "" {
+		shaPipelines, _, err := c.raw.Pipelines.ListProjectPipelines(projectID, &gl.ListProjectPipelinesOptions{
+			SHA: gl.Ptr(sha),
+		})
+		if err == nil {
+			allPipelines = append(allPipelines, shaPipelines...)
+		}
+	}
+
+	// 4. Fetch project pipelines for the merge commit SHA
+	if mergeCommitSHA != "" {
+		mergePipelines, _, err := c.raw.Pipelines.ListProjectPipelines(projectID, &gl.ListProjectPipelinesOptions{
+			SHA: gl.Ptr(mergeCommitSHA),
+		})
+		if err == nil {
+			allPipelines = append(allPipelines, mergePipelines...)
+		}
+	}
+
+	// 5. Deduplicate by ID and preserve order (descending ID)
+	seen := make(map[int64]bool)
+	var result []*PipelineInfo
+	for _, p := range allPipelines {
+		if p == nil || seen[p.ID] {
+			continue
+		}
+		seen[p.ID] = true
+
+		info := &PipelineInfo{
+			ID:     i64(p.ID),
+			Ref:    p.Ref,
+			Status: p.Status,
+			WebURL: p.WebURL,
+			Source: p.Source,
+		}
+		if p.CreatedAt != nil {
+			info.CreatedAt = p.CreatedAt.Format("2006-01-02 15:04")
+		}
+		if p.UpdatedAt != nil {
+			info.UpdatedAt = p.UpdatedAt.Format("2006-01-02 15:04")
+		}
+		result = append(result, info)
+	}
+
+	// Sort by ID descending
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].ID > result[j].ID
+	})
+
+	return result, nil
 }
 
 // GetPipeline fetches details of a single pipeline.

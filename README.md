@@ -90,13 +90,13 @@ Edit it to add your servers:
 }
 ```
 
-| Option             | Default      | Description                                                                                                                              |
-| ------------------ | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `servers`          | —            | List of GitLab server configurations                                                                                                     |
-| `youtrack_servers` | —            | List of YouTrack server configurations to resolve ticket keys to URLs (each server has `name`, `url`, and a list of `projects`)            |
-| `browser_command`  | `"xdg-open"` | Command to open URLs (e.g. `"firefox"`, `"google-chrome"`, `"brave-browser"`). Leave as `"xdg-open"` to use your system default browser. |
-| `youtrack_command` | —            | Command to open YouTrack URLs specifically (e.g. [`yt-tui`](https://github.com/nospor/yt-tui)). When set, any URL belonging to a configured YouTrack server is opened via this command instead of `browser_command`. |
-| `theme`            | `"catppuccin"`| TUI theme. Supported values: `"catppuccin"` (default) or `"teams"` (green borders, dark grey panels, purple highlights). |
+| Option             | Default        | Description                                                                                                                                                                                                          |
+| ------------------ | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `servers`          | —              | List of GitLab server configurations                                                                                                                                                                                 |
+| `youtrack_servers` | —              | List of YouTrack server configurations to resolve ticket keys to URLs (each server has `name`, `url`, and a list of `projects`)                                                                                      |
+| `browser_command`  | `"xdg-open"`   | Command to open URLs (e.g. `"firefox"`, `"google-chrome"`, `"brave-browser"`). Leave as `"xdg-open"` to use your system default browser.                                                                             |
+| `youtrack_command` | —              | Command to open YouTrack URLs specifically (e.g. [`yt-tui`](https://github.com/nospor/yt-tui)). When set, any URL belonging to a configured YouTrack server is opened via this command instead of `browser_command`. |
+| `theme`            | `"catppuccin"` | TUI theme. Supported values: `"catppuccin"` (default) or `"teams"` (green borders, dark grey panels, purple highlights).                                                                                             |
 
 You need a **Personal Access Token** with at least `api` scope. Create one at:
 `https://gitlab.com/-/user_settings/personal_access_tokens`
@@ -123,7 +123,7 @@ Both SSH and HTTPS remotes are supported:
 | `Enter`           | Open detail / select project                   |
 | `s`               | Cycle MR state filter (open→merged→closed→all) |
 | `c`               | Create new MR (MR tab only)                    |
-| `e`               | Edit selected MR (MR tab only)                  |
+| `e`               | Edit selected MR (MR tab only)                 |
 | `r`               | Refresh current tab                            |
 | `n` / `p`         | Next / previous page                           |
 | `P`               | Switch project                                 |
@@ -132,18 +132,19 @@ Both SSH and HTTPS remotes are supported:
 
 ### MR detail
 
-| Key       | Action               |
-| --------- | -------------------- |
-| `j` / `k` | Scroll detail        |
-| `Tab`     | Toggle changes panel |
-| `C`       | Comment              |
-| `e`       | Edit MR              |
-| `a`       | Approve MR           |
-| `m`       | Merge MR             |
-| `x`       | Close MR             |
-| `+` / `-` | Vote up / down       |
-| `o`       | Open link selector   |
-| `Esc`     | Back to list         |
+| Key       | Action                 |
+| --------- | ---------------------- |
+| `j` / `k` | Scroll detail          |
+| `Tab`     | Toggle changes panel   |
+| `C`       | Comment                |
+| `e`       | Edit MR                |
+| `a`       | Approve MR             |
+| `m`       | Merge MR               |
+| `x`       | Close MR               |
+| `+` / `-` | Vote up / down         |
+| `o`       | Open link selector     |
+| `p`       | Open pipeline selector |
+| `Esc`     | Back to list           |
 
 ### Create MR wizard
 
@@ -168,37 +169,37 @@ Pick the destination branch. The source branch is excluded from the list. The re
 
 **Step 3 — Details form**
 
-| Field | Default | Notes |
-| ----- | ------- | ----- |
-| Title | Branch name (humanized) | Pre-filled from source branch name |
-| Mark as Draft | ☐ Off | Prefixes title with `Draft:` |
-| Description | Last commit body | Auto-fetched from the source branch's latest commit |
-| Delete source branch | ✓ On | Removes branch after merge |
-| Squash commits | ☐ Off | Squashes all commits on merge |
+| Field                | Default                 | Notes                                               |
+| -------------------- | ----------------------- | --------------------------------------------------- |
+| Title                | Branch name (humanized) | Pre-filled from source branch name                  |
+| Mark as Draft        | ☐ Off                   | Prefixes title with `Draft:`                        |
+| Description          | Last commit body        | Auto-fetched from the source branch's latest commit |
+| Delete source branch | ✓ On                    | Removes branch after merge                          |
+| Squash commits       | ☐ Off                   | Squashes all commits on merge                       |
 
 **Form navigation:**
 
-| Key              | Action                              |
-| ---------------- | ----------------------------------- |
-| `Tab`            | Next field                          |
-| `Shift+Tab`      | Previous field                      |
-| `Space` / `Enter`| Toggle focused checkbox             |
-| `Ctrl+S`         | Submit and create the MR            |
-| `Esc`            | Go back one step (or cancel)        |
+| Key               | Action                       |
+| ----------------- | ---------------------------- |
+| `Tab`             | Next field                   |
+| `Shift+Tab`       | Previous field               |
+| `Space` / `Enter` | Toggle focused checkbox      |
+| `Ctrl+S`          | Submit and create the MR     |
+| `Esc`             | Go back one step (or cancel) |
 
 > **Note:** When the Description textarea is focused, `Enter` inserts a newline. Use `Ctrl+S` to submit, or `Tab` / `Shift+Tab` to leave the textarea.
 
 ### Pipeline detail
 
-| Key          | Action                                                                   |
-| ------------ | ------------------------------------------------------------------------ |
-| `j` / `k`    | Select job / Navigate jobs list                                          |
-| `Enter`      | View trace/log output for the selected job                               |
-| `r`          | Restart/retry selected job (requires confirmation)                        |
-| `R`          | Retry entire pipeline                                                    |
-| `c`          | Cancel pipeline                                                          |
-| `o`          | Open link selector                                                       |
-| `Esc`        | Back to list (or close trace view if open)                               |
+| Key       | Action                                             |
+| --------- | -------------------------------------------------- |
+| `j` / `k` | Select job / Navigate jobs list                    |
+| `Enter`   | View trace/log output for the selected job         |
+| `r`       | Restart/retry selected job (requires confirmation) |
+| `R`       | Retry entire pipeline                              |
+| `c`       | Cancel pipeline                                    |
+| `o`       | Open link selector                                 |
+| `Esc`     | Back to list (or close trace view if open)         |
 
 **Inside trace view:**
 - `j` / `k` (or down/up): Scroll trace log lines

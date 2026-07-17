@@ -63,6 +63,7 @@ const (
 	stateLinkSelect
 	stateCreateMR
 	stateEditMR
+	statePipelineSelect
 )
 
 // ─── Messages ─────────────────────────────────────────────────────────────────
@@ -74,6 +75,7 @@ type (
 		totalPages int
 	}
 	mrDetailLoadedMsg struct{ item *gitlab.MRInfo }
+	mrPipelinesLoadedMsg struct{ items []*gitlab.PipelineInfo }
 	pipelineLoadedMsg struct {
 		items      []*gitlab.PipelineInfo
 		totalPages int
@@ -162,7 +164,10 @@ type Model struct {
 	mrTotalPage int
 	mrCursor    int
 	mrState     gitlab.MRState
-	mrDetail    *gitlab.MRInfo
+	mrDetail             *gitlab.MRInfo
+	mrPipelines          []*gitlab.PipelineInfo
+	pipelineSelectCursor int
+	returnToMRIID        int
 
 	// MR details scroll offset and discussions
 	mrDiscussions        []*gitlab.MRDiscussion
@@ -422,6 +427,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cmdLoadMRDiscussions(m.mrDetail.IID),
 			)
 		}
+		cmds = append(cmds, m.cmdLoadMRPipelines(m.mrDetail.IID, m.mrDetail.SourceBranch, m.mrDetail.SHA, m.mrDetail.MergeCommitSHA))
 		if m.state == stateLoading {
 			m.state = stateDetail
 			m.prevState = stateMain
@@ -463,6 +469,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case mrDiscussionsLoadedMsg:
 		m.mrDiscussions = msg.discussions
 		m.clampMRDetailScroll()
+		return m, nil
+
+	case mrPipelinesLoadedMsg:
+		m.mrPipelines = msg.items
 		return m, nil
 
 	case pipelineLoadedMsg:
@@ -691,6 +701,18 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.jobTraceFocus = false
 				return m, nil
 			}
+			if m.tab == tabPipelines && m.returnToMRIID > 0 {
+				m.tab = tabMRs
+				m.returnToMRIID = 0
+				m.pipelineDetail = nil
+				m.pipelineJobs = nil
+				m.jobCursor = 0
+				m.jobTrace = ""
+				m.jobTraceJob = nil
+				m.jobTraceOpen = false
+				m.jobTraceFocus = false
+				return m, nil
+			}
 			m.state = stateMain
 			m.mrDetail = nil
 			m.mrDiffFiles = nil
@@ -698,6 +720,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mrDiffPanelOpen = false
 			m.mrDiscussions = nil
 			m.mrDetailScrollOffset = 0
+			m.mrPipelines = nil
+			m.pipelineSelectCursor = 0
 			m.pipelineDetail = nil
 			m.pipelineJobs = nil
 			m.jobCursor = 0
@@ -719,6 +743,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case stateLinkSelect:
 			m.state = m.prevState
 			m.linkItems = nil
+		case statePipelineSelect:
+			m.state = m.prevState
 		case stateError:
 			if m.prevState == stateLoading || m.prevState == stateError {
 				m.state = stateMain
@@ -734,6 +760,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleMainKey(key)
 	case stateDetail:
 		return m.handleDetailKey(key)
+	case statePipelineSelect:
+		return m.handlePipelineSelectKey(key)
 	case stateServerSelect:
 		return m.handleServerSelectKey(key)
 	case stateLinkSelect:
@@ -989,6 +1017,10 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 				m.prevState = m.state
 				m.state = stateLinkSelect
 			}
+		case "p":
+			m.pipelineSelectCursor = 0
+			m.prevState = m.state
+			m.state = statePipelineSelect
 		}
 	case tabPipelines:
 		if m.pipelineDetail == nil {
@@ -1585,6 +1617,41 @@ func (m Model) handleLinkSelectKey(key string) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.state = m.prevState
 		m.linkItems = nil
+	}
+	return m, nil
+}
+
+func (m Model) handlePipelineSelectKey(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "j", "down":
+		if m.pipelineSelectCursor < len(m.mrPipelines)-1 {
+			m.pipelineSelectCursor++
+		}
+	case "k", "up":
+		if m.pipelineSelectCursor > 0 {
+			m.pipelineSelectCursor--
+		}
+	case "enter":
+		if m.pipelineSelectCursor >= 0 && m.pipelineSelectCursor < len(m.mrPipelines) {
+			p := m.mrPipelines[m.pipelineSelectCursor]
+			m.state = stateDetail
+			m.tab = tabPipelines
+			m.pipelineDetail = p
+			m.returnToMRIID = m.mrDetail.IID
+			m.pipelineJobs = nil
+			m.jobCursor = 0
+			m.jobTrace = ""
+			m.jobTraceJob = nil
+			m.jobTraceOpen = false
+			m.jobTraceFocus = false
+			return m, tea.Batch(
+				m.cmdLoadPipelineDetail(p.ID),
+				m.cmdLoadPipelineJobs(p.ID),
+			)
+		}
+		m.state = stateDetail
+	case "esc":
+		m.state = stateDetail
 	}
 	return m, nil
 }
@@ -2205,6 +2272,17 @@ func (m Model) cmdPlayJob(jobID int64) tea.Cmd {
 	}
 }
 
+func (m Model) cmdLoadMRPipelines(iid int, sourceBranch, sha, mergeCommitSHA string) tea.Cmd {
+	pid := m.project.ID
+	return func() tea.Msg {
+		pipelines, err := m.client.GetMRPipelines(pid, iid, sourceBranch, sha, mergeCommitSHA)
+		if err != nil {
+			return errMsg{err}
+		}
+		return mrPipelinesLoadedMsg{items: pipelines}
+	}
+}
+
 func (m Model) cmdLoadMRDiffs(iid int) tea.Cmd {
 	pid := m.project.ID
 	return func() tea.Msg {
@@ -2404,6 +2482,8 @@ func (m Model) View() string {
 		return m.viewServerSelect()
 	case stateLinkSelect:
 		return m.viewLinkSelect()
+	case statePipelineSelect:
+		return m.viewPipelineSelect()
 	case stateConfirm:
 		return m.viewConfirm()
 	case stateComment:
@@ -3146,9 +3226,26 @@ func (m Model) viewMRDetailLinesForWidth(w int) ([]string, []string) {
 	if labels != "" {
 		headerRaw = append(headerRaw, lipgloss.NewStyle().PaddingLeft(2).Render(labels))
 	}
+	var pipelinesStr string
+	if m.mrPipelines != nil {
+		if len(m.mrPipelines) > 0 {
+			var pl []string
+			for _, p := range m.mrPipelines {
+				pl = append(pl, fmt.Sprintf("#%d (%s)", p.ID, statusBadge(p.Status)))
+			}
+			pipelinesStr = dimStyle.Render("Pipelines: ") + strings.Join(pl, "  ")
+		} else {
+			pipelinesStr = dimStyle.Render("Pipelines: ") + dimStyle.Italic(true).Render("none")
+		}
+	} else {
+		pipelinesStr = dimStyle.Render("Pipelines: ") + dimStyle.Italic(true).Render("(loading...)")
+	}
+	pipelinesStr = dimStyle.Width(inner).Render(pipelinesStr)
+
 	headerRaw = append(headerRaw,
 		lipgloss.NewStyle().PaddingLeft(2).Render(dimStyle.Render("Updated: "+mr.UpdatedAt+"  Created: "+mr.CreatedAt)),
 		lipgloss.NewStyle().PaddingLeft(2).Render(diffBadge),
+		lipgloss.NewStyle().PaddingLeft(2).Render(pipelinesStr),
 		"",
 		lipgloss.NewStyle().PaddingLeft(2).Render(divider),
 		"",
@@ -3851,6 +3948,34 @@ func (m Model) viewLinkSelect() string {
 	return overlay(bg, box, m.width, targetHeight, startX, startY)
 }
 
+func (m Model) viewPipelineSelect() string {
+	var rows []string
+	rows = append(rows, subtitleStyle.Render("Select Pipeline"), "")
+	if len(m.mrPipelines) == 0 {
+		rows = append(rows, dimStyle.Render("  No pipelines found."))
+	} else {
+		for i, p := range m.mrPipelines {
+			line := fmt.Sprintf("#%d  %s  %s  %s", p.ID, padStatusBadge(statusBadge(p.Status), 12), truncate(p.Ref, 20), dimStyle.Render(p.UpdatedAt))
+			if i == m.pipelineSelectCursor {
+				rows = append(rows, selectedStyle.Render("▶ "+line))
+			} else {
+				rows = append(rows, normalItemStyle.Render("  "+line))
+			}
+		}
+	}
+	rows = append(rows, "", dimStyle.Render("↑↓ navigate  Enter jump  Esc cancel"))
+
+	box := panelStyle.Padding(1, 3).Render(strings.Join(rows, "\n"))
+
+	bg := m.viewBackground()
+	dlgWidth := lipgloss.Width(box)
+	dlgHeight := lipgloss.Height(box)
+	targetHeight := m.height - m.getHeightOffset()
+	startX := (m.width - dlgWidth) / 2
+	startY := (targetHeight - dlgHeight) / 2
+	return overlay(bg, box, m.width, targetHeight, startX, startY)
+}
+
 // ─── Comment composer overlay ─────────────────────────────────────────────────
 
 func (m Model) viewCommentComposer() string {
@@ -4017,6 +4142,7 @@ func (m Model) viewDetailFooter() string {
 				keyHint("+", "vote up"),
 				keyHint("-", "vote down"),
 				keyHint("o", "open link"),
+				keyHint("p", "pipelines"),
 				keyHint("Esc", "back"),
 				keyHint("q", "quit"),
 			}
