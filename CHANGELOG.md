@@ -1,4 +1,14 @@
 
+## [0.6.1] - 2026-07-17
+
+### Other
+
+- Point Makefile build target directly to main.go file ([aff2d90](https://github.com/nospor/gitlab-tui/commit/aff2d9062999222e09c0ac480e889db1b96a002f))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.6.0 [skip ci] ([a110a54](https://github.com/nospor/gitlab-tui/commit/a110a5430e702e35d44102445db17ef4ad9d3b44))
+
 ## [0.6.0] - 2026-07-16
 
 ### Bug Fixes
