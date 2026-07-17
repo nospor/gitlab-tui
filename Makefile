@@ -1,5 +1,5 @@
 BIN := gitlab-tui
-CMD := ./cmd/gitlab-tui/main.go
+CMD := ./cmd/gitlab-tui
 INSTALL_DIR := /usr/local/bin
 
 .PHONY: build install run clean
