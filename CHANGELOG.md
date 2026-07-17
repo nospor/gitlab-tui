@@ -1,4 +1,14 @@
 
+## [0.6.2] - 2026-07-17
+
+### Bug Fixes
+
+- Anchor binary ignore pattern in gitignore ([c5dc0a9](https://github.com/nospor/gitlab-tui/commit/c5dc0a964f746bbeb6e0387c8803b0b13c826c1e))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.6.1 [skip ci] ([aa2e8f2](https://github.com/nospor/gitlab-tui/commit/aa2e8f278f682cdef90bec7eefa7432f966e524e))
+
 ## [0.6.1] - 2026-07-17
 
 ### Other
