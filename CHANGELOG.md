@@ -1,4 +1,14 @@
 
+## [0.6.4] - 2026-07-17
+
+### Other
+
+- Make install path configurable ([08e3bce](https://github.com/nospor/gitlab-tui/commit/08e3bce59c0ed56e92cbaa7f7b1624c63d578c1a))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.6.3 [skip ci] ([1a0253a](https://github.com/nospor/gitlab-tui/commit/1a0253a0021a2da72383888d50e55c4c17e8ebb7))
+
 ## [0.6.3] - 2026-07-17
 
 ### Features
