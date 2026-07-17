@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	gl "gitlab.com/gitlab-org/api/client-go"
@@ -463,9 +464,11 @@ type MRInfo struct {
 	UserNotesCount int
 	Labels         []string
 	Draft          bool
-	Description    string
-	Assignees      []string
-	Reviewers      []string
+	Description             string
+	Assignees               []string
+	Reviewers               []string
+	ForceRemoveSourceBranch bool
+	Squash                  bool
 }
 
 // ListMRs lists merge requests for a project.
@@ -498,8 +501,10 @@ func (c *Client) ListMRs(projectID int, state MRState, page int) ([]*MRInfo, int
 			Upvotes:        i64(mr.Upvotes),
 			Downvotes:      i64(mr.Downvotes),
 			UserNotesCount: i64(mr.UserNotesCount),
-			Description:    mr.Description,
-			Draft:          mr.Draft,
+			Description:             mr.Description,
+			Draft:                   mr.Draft,
+			ForceRemoveSourceBranch: mr.ForceRemoveSourceBranch,
+			Squash:                  mr.Squash,
 		}
 		if mr.Author != nil {
 			info.Author = mr.Author.Username
@@ -541,8 +546,10 @@ func (c *Client) GetMR(projectID, mriid int) (*MRInfo, error) {
 		Upvotes:        i64(mr.Upvotes),
 		Downvotes:      i64(mr.Downvotes),
 		UserNotesCount: i64(mr.UserNotesCount),
-		Description:    mr.Description,
-		Draft:          mr.Draft,
+		Description:             mr.Description,
+		Draft:                   mr.Draft,
+		ForceRemoveSourceBranch: mr.ForceRemoveSourceBranch,
+		Squash:                  mr.Squash,
 	}
 	if mr.Author != nil {
 		info.Author = mr.Author.Username
@@ -956,6 +963,62 @@ func (c *Client) CreateMR(projectID int, sourceBranch, targetBranch, title strin
 	if err != nil {
 		return nil, fmt.Errorf("creating MR: %w", err)
 	}
+	info := &MRInfo{
+		IID:          int(mr.IID),
+		Title:        mr.Title,
+		State:        mr.State,
+		SourceBranch: mr.SourceBranch,
+		TargetBranch: mr.TargetBranch,
+		WebURL:       mr.WebURL,
+	}
+	return info, nil
+}
+
+// UpdateMROptions holds optional parameters for updating a merge request.
+type UpdateMROptions struct {
+	Description        string
+	TargetBranch       string
+	Draft              bool
+	RemoveSourceBranch bool
+	Squash             bool
+}
+
+// UpdateMR updates an existing merge request and returns basic info about it.
+func (c *Client) UpdateMR(projectID, mriid int, title string, opts UpdateMROptions) (*MRInfo, error) {
+	// Strip existing draft prefixes from title
+	cleanTitle := title
+	for {
+		if strings.HasPrefix(strings.ToLower(cleanTitle), "draft:") {
+			cleanTitle = strings.TrimSpace(cleanTitle[6:])
+			continue
+		}
+		if strings.HasPrefix(strings.ToLower(cleanTitle), "wip:") {
+			cleanTitle = strings.TrimSpace(cleanTitle[4:])
+			continue
+		}
+		break
+	}
+
+	finalTitle := cleanTitle
+	if opts.Draft {
+		finalTitle = "Draft: " + cleanTitle
+	}
+
+	o := &gl.UpdateMergeRequestOptions{
+		Title:              &finalTitle,
+		RemoveSourceBranch: &opts.RemoveSourceBranch,
+		Squash:             &opts.Squash,
+	}
+	if opts.TargetBranch != "" {
+		o.TargetBranch = &opts.TargetBranch
+	}
+	o.Description = &opts.Description
+
+	mr, _, err := c.raw.MergeRequests.UpdateMergeRequest(projectID, int64(mriid), o)
+	if err != nil {
+		return nil, fmt.Errorf("updating MR: %w", err)
+	}
+
 	info := &MRInfo{
 		IID:          int(mr.IID),
 		Title:        mr.Title,

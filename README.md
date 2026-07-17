@@ -6,7 +6,7 @@ Built with [BubbleTea](https://github.com/charmbracelet/bubbletea) and the offic
 
 ## Features
 
-- 🔀 **Merge Requests** — list, filter by state (open/merged/closed), view details, approve, merge, close, and **create new MRs** via an interactive wizard
+- 🔀 **Merge Requests** — list, filter by state (open/merged/closed), view details, approve, merge, close, edit existing MRs, and **create new MRs** via an interactive wizard
 - 🚀 **Pipelines** — list, view details (with dual-pane layout showing jobs and statuses), automatic background refresh (every 5s) for active pipelines, retry/cancel pipelines, restart individual jobs, scroll/search job trace logs, and open traces directly in your external editor
 - 🐛 **Issues** — list, view details
 - 📁 **Projects** — browse and switch projects on the current server
@@ -123,6 +123,7 @@ Both SSH and HTTPS remotes are supported:
 | `Enter`           | Open detail / select project                   |
 | `s`               | Cycle MR state filter (open→merged→closed→all) |
 | `c`               | Create new MR (MR tab only)                    |
+| `e`               | Edit selected MR (MR tab only)                  |
 | `r`               | Refresh current tab                            |
 | `n` / `p`         | Next / previous page                           |
 | `P`               | Switch project                                 |
@@ -136,6 +137,7 @@ Both SSH and HTTPS remotes are supported:
 | `j` / `k` | Scroll detail        |
 | `Tab`     | Toggle changes panel |
 | `C`       | Comment              |
+| `e`       | Edit MR              |
 | `a`       | Approve MR           |
 | `m`       | Merge MR             |
 | `x`       | Close MR             |
@@ -146,6 +148,17 @@ Both SSH and HTTPS remotes are supported:
 ### Create MR wizard
 
 Press `c` on the MR list tab to open the Create MR wizard. It guides you through three steps:
+
+### Edit MR popup
+
+Press `e` on either the MR list tab (for the highlighted MR) or the MR detail page to open the Edit MR popup. It loads the MR's current fields:
+- **Title** (excluding any `Draft:` or `WIP:` prefix)
+- **Mark as Draft** checkbox
+- **Description**
+- **Delete source branch** checkbox
+- **Squash commits** checkbox
+
+Using the same form navigation keys as the Create MR wizard (`Tab`, `Shift+Tab`, `Space`, `Ctrl+S`, `Esc`), you can modify these details and save your changes.
 
 **Step 1 — Source branch**
 Pick the branch you want to merge from. All project branches are shown in a scrollable list.
