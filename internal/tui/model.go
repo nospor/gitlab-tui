@@ -601,6 +601,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		m.doneMsg = ""
 		// Comment input captures all keys
 		if m.state == stateComment {
 			return m.handleCommentKey(msg)
@@ -2503,7 +2504,7 @@ func (m Model) viewMain() string {
 	body := m.viewBody()
 	footer := lipgloss.NewStyle().Width(m.width).Render(m.viewFooter())
 
-	bodyHeight := m.height - lipgloss.Height(header) - lipgloss.Height(tabs) - lipgloss.Height(footer) - m.getHeightOffset() - 1
+	bodyHeight := m.height - lipgloss.Height(header) - lipgloss.Height(tabs) - lipgloss.Height(footer) - m.getHeightOffset()
 	if bodyHeight < 1 {
 		bodyHeight = 1
 	}
