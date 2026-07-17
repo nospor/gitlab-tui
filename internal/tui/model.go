@@ -2623,7 +2623,7 @@ func (m Model) viewMRList() string {
 		line := fmt.Sprintf("!%-4d  %-55s  %s  %-14s  %s%s",
 			mr.IID,
 			truncate(title, 55),
-			statusBadge(mr.State),
+			padStatusBadge(statusBadge(mr.State), 16),
 			truncate(mr.Author, 14),
 			dimStyle.Render(mr.UpdatedAt),
 			draft,
@@ -2639,7 +2639,7 @@ func (m Model) viewMRList() string {
 	header := lipgloss.NewStyle().
 		Foreground(colorMuted).
 		PaddingLeft(2).
-		Render(fmt.Sprintf("%-6s  %-55s  %-12s  %-14s  %-16s",
+		Render(fmt.Sprintf("%-6s  %-55s  %-16s  %-14s  %-16s",
 			"IID", "Title", "State", "Author", "Updated"))
 	header += "\n" + lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", m.width-2))
 
@@ -2660,7 +2660,7 @@ func (m Model) viewPipelineList() string {
 		line := fmt.Sprintf("#%-6d  %-22s  %s  %-14s  %-12s  %s",
 			p.ID,
 			truncate(p.Ref, 22),
-			statusBadge(p.Status),
+			padStatusBadge(statusBadge(p.Status), 16),
 			truncate(p.User, 14),
 			truncate(p.Source, 12),
 			dimStyle.Render(p.UpdatedAt),
@@ -2674,7 +2674,7 @@ func (m Model) viewPipelineList() string {
 	}
 
 	header := lipgloss.NewStyle().Foreground(colorMuted).PaddingLeft(2).
-		Render(fmt.Sprintf("%-8s  %-22s  %-12s  %-14s  %-12s  %-16s",
+		Render(fmt.Sprintf("%-8s  %-22s  %-16s  %-14s  %-12s  %-16s",
 			"ID", "Ref", "Status", "Triggered by", "Source", "Updated"))
 	header += "\n" + lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", m.width-2))
 
@@ -2695,7 +2695,7 @@ func (m Model) viewIssueList() string {
 		line := fmt.Sprintf("#%-5d  %-55s  %s  %-14s  %s",
 			iss.IID,
 			truncate(iss.Title, 55),
-			statusBadge(iss.State),
+			padStatusBadge(statusBadge(iss.State), 16),
 			truncate(iss.Author, 14),
 			dimStyle.Render(iss.UpdatedAt),
 		)
@@ -2708,7 +2708,7 @@ func (m Model) viewIssueList() string {
 	}
 
 	header := lipgloss.NewStyle().Foreground(colorMuted).PaddingLeft(2).
-		Render(fmt.Sprintf("%-7s  %-55s  %-12s  %-14s  %-16s",
+		Render(fmt.Sprintf("%-7s  %-55s  %-16s  %-14s  %-16s",
 			"IID", "Title", "State", "Author", "Updated"))
 	header += "\n" + lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", m.width-2))
 
@@ -3341,8 +3341,12 @@ func (m Model) viewPipelineDetail(bodyH int) string {
 			selected := idx == m.jobCursor
 
 			// Format row
-			statusStr := statusBadge(job.Status)
-			nameStr := truncate(job.Name, leftW-16) // truncate so it fits
+			statusStr := padStatusBadge(statusBadge(job.Status), 15)
+			nameLen := leftW - 20
+			if nameLen < 5 {
+				nameLen = 5
+			}
+			nameStr := truncate(job.Name, nameLen)
 
 			rowText := fmt.Sprintf("%s %s", statusStr, nameStr)
 			if selected {

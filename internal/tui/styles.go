@@ -186,6 +186,14 @@ func statusBadge(status string) string {
 	}
 }
 
+func padStatusBadge(badge string, width int) string {
+	w := lipgloss.Width(badge)
+	if w >= width {
+		return badge
+	}
+	return badge + strings.Repeat(" ", width-w)
+}
+
 // tabStyle renders a tab header.
 func tabStyle(label string, active bool) string {
 	if active {
