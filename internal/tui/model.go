@@ -1328,6 +1328,10 @@ func (m Model) handleCreateMRKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case " ":
 			// Toggle checkboxes with space
 			switch m.createMRFormField {
+			case mrFieldTitle:
+				var cmd tea.Cmd
+				m.createMRTitle, cmd = m.createMRTitle.Update(msg)
+				return m, cmd
 			case mrFieldDraft:
 				m.createMRDraft = !m.createMRDraft
 			case mrFieldDeleteBranch:
@@ -1510,6 +1514,10 @@ func (m Model) handleEditMRKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case " ":
 		switch m.createMRFormField {
+		case mrFieldTitle:
+			var cmd tea.Cmd
+			m.createMRTitle, cmd = m.createMRTitle.Update(msg)
+			return m, cmd
 		case mrFieldDraft:
 			m.createMRDraft = !m.createMRDraft
 		case mrFieldDeleteBranch:
