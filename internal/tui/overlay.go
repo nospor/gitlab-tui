@@ -223,6 +223,9 @@ func styleHasBackground(style string) bool {
 }
 
 func overlay(background, foreground string, width, height, startX, startY int) string {
+	if height <= 0 || width <= 0 {
+		return background
+	}
 	bgLines := strings.Split(background, "\n")
 	fgLines := strings.Split(foreground, "\n")
 

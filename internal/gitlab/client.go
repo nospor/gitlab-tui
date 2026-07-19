@@ -1120,3 +1120,104 @@ func (c *Client) WhoAmI() (string, error) {
 	}
 	return u.Username, nil
 }
+
+// CommitInfo represents a simplified commit representation.
+type CommitInfo struct {
+	ID         string
+	ShortID    string
+	Title      string
+	AuthorName string
+	Date       string
+}
+
+// CompareInfo represents the results of comparing two branches/refs.
+type CompareInfo struct {
+	Commits []*CommitInfo
+	Diffs   []*DiffFile
+}
+
+// DeleteBranch deletes a branch in the GitLab project.
+func (c *Client) DeleteBranch(projectID int, branch string) error {
+	_, err := c.raw.Branches.DeleteBranch(projectID, branch)
+	return err
+}
+
+// ListCommits fetches commits for a project ref (branch or tag).
+func (c *Client) ListCommits(projectID int, ref string) ([]*CommitInfo, error) {
+	opts := &gl.ListCommitsOptions{
+		RefName: gl.Ptr(ref),
+		ListOptions: gl.ListOptions{
+			Page:    1,
+			PerPage: 100,
+		},
+	}
+	commits, _, err := c.raw.Commits.ListCommits(projectID, opts)
+	if err != nil {
+		return nil, err
+	}
+	var result []*CommitInfo
+	for _, comm := range commits {
+		dateStr := ""
+		if comm.CommittedDate != nil {
+			dateStr = comm.CommittedDate.Format("2006-01-02 15:04")
+		}
+		result = append(result, &CommitInfo{
+			ID:         comm.ID,
+			ShortID:    comm.ShortID,
+			Title:      comm.Title,
+			AuthorName: comm.AuthorName,
+			Date:       dateStr,
+		})
+	}
+	return result, nil
+}
+
+// Compare compares two branches/refs in the GitLab project.
+func (c *Client) Compare(projectID int, from, to string) (*CompareInfo, error) {
+	opts := &gl.CompareOptions{
+		From: gl.Ptr(from),
+		To:   gl.Ptr(to),
+	}
+	comp, _, err := c.raw.Repositories.Compare(projectID, opts)
+	if err != nil {
+		return nil, err
+	}
+	var commits []*CommitInfo
+	for _, comm := range comp.Commits {
+		dateStr := ""
+		if comm.CommittedDate != nil {
+			dateStr = comm.CommittedDate.Format("2006-01-02 15:04")
+		}
+		commits = append(commits, &CommitInfo{
+			ID:         comm.ID,
+			ShortID:    comm.ShortID,
+			Title:      comm.Title,
+			AuthorName: comm.AuthorName,
+			Date:       dateStr,
+		})
+	}
+	var diffs []*DiffFile
+	for _, d := range comp.Diffs {
+		f := &DiffFile{
+			OldPath:   d.OldPath,
+			NewPath:   d.NewPath,
+			TooLarge:  false,
+			Collapsed: false,
+		}
+		lines := parseDiffLines(d.Diff)
+		for _, l := range lines {
+			if l.Type == "added" {
+				f.Added++
+			} else if l.Type == "removed" {
+				f.Deleted++
+			}
+		}
+		f.Lines = lines
+		diffs = append(diffs, f)
+	}
+	return &CompareInfo{
+		Commits: commits,
+		Diffs:   diffs,
+	}, nil
+}
+

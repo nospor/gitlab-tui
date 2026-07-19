@@ -4,8 +4,10 @@ import (
 	"reflect"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"gitlab-tui/internal/config"
+	"gitlab-tui/internal/gitlab"
 )
 
 func TestExtractYouTrackLinks(t *testing.T) {
@@ -84,4 +86,36 @@ func TestInitTheme(t *testing.T) {
 
 	// Reset to default
 	InitTheme("catppuccin")
+}
+
+func TestCompareBranchKey(t *testing.T) {
+	// Initialize theme colors to prevent nil styles/panics in View
+	InitTheme("catppuccin")
+
+	m := Model{
+		cfg: &config.Config{
+			Servers: []config.Server{
+				{Name: "GitLab", URL: "https://gitlab.com"},
+			},
+		},
+		tab:          tabBranches,
+		state:        stateMain,
+		project:      &gitlab.ProjectInfo{ID: 1, DefaultBranch: "main"},
+		branches:     []string{"main", "feature"},
+		branchCursor: 0,
+		width:        80,
+		height:       24,
+	}
+
+	// Update with key "C"
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'C'}}
+	res, _ := m.Update(msg)
+	
+	newModel := res.(Model)
+	if newModel.state != stateCompareBranchSelect {
+		t.Errorf("expected state to be stateCompareBranchSelect, got %v", newModel.state)
+	}
+
+	// Call View to check if it panics or crashes
+	_ = newModel.View()
 }

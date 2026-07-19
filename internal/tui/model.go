@@ -29,12 +29,20 @@ const (
 	commentModeReply
 )
 
+type branchDetailView int
+
+const (
+	branchViewCommits branchDetailView = iota
+	branchViewCompare
+)
+
 // ─── Tabs ─────────────────────────────────────────────────────────────────────
 
 type tabID int
 
 const (
 	tabMRs tabID = iota
+	tabBranches
 	tabPipelines
 	tabIssues
 	tabProjects
@@ -43,9 +51,10 @@ const (
 
 var tabLabels = [tabCount]string{
 	"  1: Merge Requests",
-	"  2: Pipelines",
-	"  3: Issues",
-	"  4: Projects",
+	"  2: Branches",
+	"  3: Pipelines",
+	"  4: Issues",
+	"  5: Projects",
 }
 
 // ─── App state ────────────────────────────────────────────────────────────────
@@ -64,6 +73,7 @@ const (
 	stateCreateMR
 	stateEditMR
 	statePipelineSelect
+	stateCompareBranchSelect
 )
 
 // ─── Messages ─────────────────────────────────────────────────────────────────
@@ -117,6 +127,15 @@ type (
 	commitMsgLoadedMsg struct {
 		title string
 		body  string
+	}
+	branchCommitsLoadedMsg struct {
+		branch  string
+		commits []*gitlab.CommitInfo
+	}
+	branchCompareLoadedMsg struct {
+		targetBranch string
+		sourceBranch string
+		compare      *gitlab.CompareInfo
 	}
 )
 
@@ -219,6 +238,24 @@ type Model struct {
 	projectTotalPage int
 	projectCursor    int
 	projectSearch    textinput.Model
+
+	// Branches view
+	branches             []string
+	branchCursor         int
+
+	// Branch detail/commits/compare view
+	branchDetailView          branchDetailView
+	branchDetailName          string // source branch
+	branchCommits             []*gitlab.CommitInfo
+	branchCommitCursor        int
+	branchCompare             *gitlab.CompareInfo
+	branchCompareTarget       string
+	branchCompareCursor       int
+	branchCompareDiffIdx      int
+	branchCompareLineIdx      int
+	branchCompareActivePanel  int // 0 = commits list, 1 = files list, 2 = diff lines
+	branchCompareScrollOffset int
+	compareSelectCursor       int
 
 	// Server select
 	serverCursor int
@@ -579,6 +616,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case branchesLoadedMsg:
 		m.createMRBranches = msg.branches
+		m.branches = msg.branches
+		if m.state == stateLoading && m.tab == tabBranches {
+			m.state = stateMain
+			m.branchCursor = 0
+		}
 		// If only one source branch candidate was loaded, auto-select it
 		if m.state == stateCreateMR && m.createMRStep == 0 && len(m.createMRBranches) > 0 {
 			// pre-position cursor on a branch that has no open MR (best effort; just stay at 0)
@@ -590,7 +632,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.project != nil {
 				defaultBranch = m.project.DefaultBranch
 			}
-			for i, b := range m.createMRBranches {
+			m.createMRTgtCursor = 0
+			for i, b := range m.mrTgtBranchList() {
 				if b == defaultBranch {
 					m.createMRTgtCursor = i
 					break
@@ -598,6 +641,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+
+	case branchCommitsLoadedMsg:
+		m.branchCommits = msg.commits
+		m.branchDetailName = msg.branch
+		m.branchCommitCursor = 0
+		if m.state == stateLoading {
+			m.state = stateDetail
+			m.prevState = stateMain
+		}
+		return m, nil
+
+	case branchCompareLoadedMsg:
+		m.branchCompare = msg.compare
+		m.branchCompareTarget = msg.targetBranch
+		m.branchDetailName = msg.sourceBranch
+		m.branchCompareCursor = 0
+		m.branchCompareDiffIdx = 0
+		m.branchCompareLineIdx = 0
+		m.branchCompareActivePanel = 0
+		m.branchCompareScrollOffset = 0
+		if m.state == stateLoading {
+			m.state = stateDetail
+			m.prevState = stateMain
+		}
+		return m, nil
+
 
 	case commitMsgLoadedMsg:
 		// Pre-fill description with the last commit body (skip the title line)
@@ -691,6 +760,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key == "esc" {
 		switch m.state {
 		case stateDetail:
+			if m.tab == tabBranches && m.branchDetailView == branchViewCompare && m.branchCompareActivePanel == 2 {
+				m.branchCompareActivePanel = 1
+				return m, nil
+			}
 			if m.mrDiffPanelOpen {
 				// Close diff panel first
 				m.mrDiffPanelOpen = false
@@ -730,13 +803,24 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.jobTraceOpen = false
 			m.jobTraceFocus = false
 			m.issueDetail = nil
+			m.branchDetailName = ""
+			m.branchCommits = nil
+			m.branchCommitCursor = 0
+			m.branchCompare = nil
+			m.branchCompareTarget = ""
+			m.branchCompareCursor = 0
+			m.branchCompareDiffIdx = 0
+			m.branchCompareLineIdx = 0
+			m.branchCompareActivePanel = 0
 			if len(m.mrs) == 0 {
 				m.state = stateLoading
 				m.loadMsg = "Loading merge requests..."
 				return m, m.cmdLoadMRs()
 			}
 		case stateServerSelect:
-			m.state = stateMain
+			m.state = m.prevState
+		case stateCompareBranchSelect:
+			m.state = m.prevState
 		case stateConfirm:
 			m.state = m.prevState
 			m.confirm = nil
@@ -762,6 +846,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleDetailKey(key)
 	case statePipelineSelect:
 		return m.handlePipelineSelectKey(key)
+	case stateCompareBranchSelect:
+		return m.handleCompareBranchSelectKey(key)
+
 	case stateServerSelect:
 		return m.handleServerSelectKey(key)
 	case stateLinkSelect:
@@ -806,14 +893,18 @@ func (m Model) handleMainKey(key string) (tea.Model, tea.Cmd) {
 		m.projectSearch.Blur()
 		return m, m.cmdLoadMRs()
 	case "2":
+		m.tab = tabBranches
+		m.projectSearch.Blur()
+		return m, m.cmdLoadBranches()
+	case "3":
 		m.tab = tabPipelines
 		m.projectSearch.Blur()
 		return m, m.cmdLoadPipelines()
-	case "3":
+	case "4":
 		m.tab = tabIssues
 		m.projectSearch.Blur()
 		return m, m.cmdLoadIssues()
-	case "4":
+	case "5":
 		m.tab = tabProjects
 		m.projectSearch.Focus()
 		return m, m.cmdLoadProjects()
@@ -834,9 +925,24 @@ func (m Model) handleMainKey(key string) (tea.Model, tea.Cmd) {
 	case "r":
 		return m, m.reloadCurrent()
 	case "c":
-		// Create new MR (only on MR tab)
-		if m.tab == tabMRs && m.project != nil {
-			return m.startCreateMR()
+		if m.project != nil {
+			if m.tab == tabMRs {
+				return m.startCreateMR()
+			} else if m.tab == tabBranches && m.branchCursor < len(m.branches) {
+				return m.startCreateMRFromBranch(m.branches[m.branchCursor])
+			}
+		}
+	case "C":
+		if m.tab == tabBranches && m.project != nil && m.branchCursor < len(m.branches) {
+			m.compareSelectCursor = 0
+			m.prevState = m.state
+			m.state = stateCompareBranchSelect
+			return m, nil
+		}
+	case "d":
+		if m.tab == tabBranches && m.project != nil && m.branchCursor < len(m.branches) {
+			branch := m.branches[m.branchCursor]
+			return m.promptConfirm("Delete Branch", fmt.Sprintf("Are you sure you want to delete branch '%s'?", branch), m.cmdDeleteBranch(branch))
 		}
 	case "e":
 		// Edit selected MR (only on MR tab)
@@ -1115,6 +1221,71 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 				m.linkCursor = 0
 				m.prevState = m.state
 				m.state = stateLinkSelect
+			}
+		}
+	case tabBranches:
+		if m.branchDetailView == branchViewCommits {
+			switch key {
+			case "j", "down":
+				if m.branchCommitCursor < len(m.branchCommits)-1 {
+					m.branchCommitCursor++
+				}
+			case "k", "up":
+				if m.branchCommitCursor > 0 {
+					m.branchCommitCursor--
+				}
+			}
+		} else { // branchViewCompare
+			if m.branchCompare == nil {
+				return m, nil
+			}
+			if m.branchCompareActivePanel == 0 {
+				switch key {
+				case "j", "down":
+					if m.branchCompareCursor < len(m.branchCompare.Commits)-1 {
+						m.branchCompareCursor++
+					}
+				case "k", "up":
+					if m.branchCompareCursor > 0 {
+						m.branchCompareCursor--
+					}
+				case "tab", "right":
+					m.branchCompareActivePanel = 1
+				}
+			} else if m.branchCompareActivePanel == 1 {
+				switch key {
+				case "j", "down":
+					if m.branchCompareDiffIdx < len(m.branchCompare.Diffs)-1 {
+						m.branchCompareDiffIdx++
+					}
+				case "k", "up":
+					if m.branchCompareDiffIdx > 0 {
+						m.branchCompareDiffIdx--
+					}
+				case "tab", "left":
+					m.branchCompareActivePanel = 0
+				case "enter":
+					m.branchCompareActivePanel = 2
+					m.branchCompareLineIdx = 0
+					m.branchCompareScrollOffset = 0
+				}
+			} else { // active panel 2: diff lines
+				if len(m.branchCompare.Diffs) > 0 && m.branchCompareDiffIdx < len(m.branchCompare.Diffs) {
+					f := m.branchCompare.Diffs[m.branchCompareDiffIdx]
+					switch key {
+					case "j", "down":
+						if m.branchCompareLineIdx < len(f.Lines)-1 {
+							m.branchCompareLineIdx++
+						}
+					case "k", "up":
+						if m.branchCompareLineIdx > 0 {
+							m.branchCompareLineIdx--
+						}
+					case "esc", "left":
+						m.branchCompareActivePanel = 1
+						return m, nil
+					}
+				}
 			}
 		}
 	}
@@ -1882,6 +2053,8 @@ func (m *Model) listLen() int {
 	switch m.tab {
 	case tabMRs:
 		return len(m.mrs)
+	case tabBranches:
+		return len(m.branches)
 	case tabPipelines:
 		return len(m.pipelines)
 	case tabIssues:
@@ -1896,6 +2069,8 @@ func (m *Model) cursor() int {
 	switch m.tab {
 	case tabMRs:
 		return m.mrCursor
+	case tabBranches:
+		return m.branchCursor
 	case tabPipelines:
 		return m.pipelineCursor
 	case tabIssues:
@@ -1912,6 +2087,10 @@ func (m *Model) moveCursorDown() {
 	case tabMRs:
 		if m.mrCursor < n-1 {
 			m.mrCursor++
+		}
+	case tabBranches:
+		if m.branchCursor < n-1 {
+			m.branchCursor++
 		}
 	case tabPipelines:
 		if m.pipelineCursor < n-1 {
@@ -1933,6 +2112,10 @@ func (m *Model) moveCursorUp() {
 	case tabMRs:
 		if m.mrCursor > 0 {
 			m.mrCursor--
+		}
+	case tabBranches:
+		if m.branchCursor > 0 {
+			m.branchCursor--
 		}
 	case tabPipelines:
 		if m.pipelineCursor > 0 {
@@ -1960,6 +2143,14 @@ func (m Model) openDetail() (Model, tea.Cmd) {
 				m.cmdLoadMRDetail(m.mrDetail.IID),
 				m.cmdLoadMRDiscussions(m.mrDetail.IID),
 			)
+		}
+	case tabBranches:
+		if m.branchCursor < len(m.branches) {
+			branch := m.branches[m.branchCursor]
+			m.state = stateLoading
+			m.loadMsg = fmt.Sprintf("Loading commits for %s...", branch)
+			m.branchDetailView = branchViewCommits
+			return m, m.cmdLoadBranchCommits(branch)
 		}
 	case tabPipelines:
 		if m.pipelineCursor < len(m.pipelines) {
@@ -2058,6 +2249,8 @@ func (m Model) reloadCurrent() tea.Cmd {
 	switch m.tab {
 	case tabMRs:
 		return m.cmdLoadMRs()
+	case tabBranches:
+		return m.cmdLoadBranches()
 	case tabPipelines:
 		return m.cmdLoadPipelines()
 	case tabIssues:
@@ -2492,6 +2685,8 @@ func (m Model) View() string {
 		return m.viewLinkSelect()
 	case statePipelineSelect:
 		return m.viewPipelineSelect()
+	case stateCompareBranchSelect:
+		return m.viewCompareBranchSelect()
 	case stateConfirm:
 		return m.viewConfirm()
 	case stateComment:
@@ -2589,13 +2784,17 @@ func (m Model) viewError() string {
 func (m Model) viewMain() string {
 	header := lipgloss.NewStyle().Width(m.width).MaxHeight(1).Render(m.viewHeader())
 	tabs := lipgloss.NewStyle().Width(m.width).MaxHeight(2).Render(m.viewTabs())
-	body := m.viewBody()
-	footer := lipgloss.NewStyle().Width(m.width).Render(m.viewFooter())
-
-	bodyHeight := m.height - lipgloss.Height(header) - lipgloss.Height(tabs) - lipgloss.Height(footer) - m.getHeightOffset()
+	
+	bodyHeight := m.height - lipgloss.Height(header) - lipgloss.Height(tabs) - m.getHeightOffset()
+	// Temp footer render to calculate bodyHeight accurately
+	footerH := lipgloss.Height(lipgloss.NewStyle().Width(m.width).Render(m.viewFooter()))
+	bodyHeight -= footerH
 	if bodyHeight < 1 {
 		bodyHeight = 1
 	}
+
+	body := m.viewBody(bodyHeight)
+	footer := lipgloss.NewStyle().Width(m.width).Render(m.viewFooter())
 
 	bodyPanel := lipgloss.NewStyle().
 		Width(m.width).
@@ -2665,9 +2864,9 @@ func (m Model) viewTabs() string {
 	return lipgloss.JoinVertical(lipgloss.Left, bar, divider)
 }
 
-func (m Model) viewBody() string {
+func (m Model) viewBody(bodyH int) string {
 	if m.project == nil && m.tab != tabProjects {
-		lines := []string{dimStyle.Render("No project selected. Press ") + accentStyle.Render("4") + dimStyle.Render(" to select a project.")}
+		lines := []string{dimStyle.Render("No project selected. Press ") + accentStyle.Render("5") + dimStyle.Render(" to select a project.")}
 		if m.startupWarn != "" {
 			lines = append(lines, "", warningStyle.Render("⚠ "+m.startupWarn))
 		}
@@ -2678,6 +2877,8 @@ func (m Model) viewBody() string {
 	switch m.tab {
 	case tabMRs:
 		return m.viewMRList()
+	case tabBranches:
+		return m.viewBranchList(bodyH)
 	case tabPipelines:
 		return m.viewPipelineList()
 	case tabIssues:
@@ -2853,6 +3054,12 @@ func (m Model) viewDetail() string {
 			body = m.viewMRDetailSplit(bodyH)
 		} else {
 			body = m.viewMRDetail(bodyH)
+		}
+	case tabBranches:
+		if m.branchDetailView == branchViewCommits {
+			body = m.viewBranchCommits(bodyH)
+		} else {
+			body = m.viewBranchCompare(bodyH)
 		}
 	case tabPipelines:
 		body = m.viewPipelineDetail(bodyH)
@@ -4069,7 +4276,7 @@ func (m Model) viewConfirm() string {
 
 func (m Model) viewFooter() string {
 	hints := []string{
-		keyHint("Tab/1-4", "tabs"),
+		keyHint("Tab/1-5", "tabs"),
 		keyHint("↑↓", "navigate"),
 		keyHint("Enter", "open"),
 		keyHint("r", "refresh"),
@@ -4082,6 +4289,14 @@ func (m Model) viewFooter() string {
 		if m.project != nil {
 			hints = append(hints, keyHint("c", "create MR"))
 			hints = append(hints, keyHint("e", "edit MR"))
+		}
+	}
+
+	if m.tab == tabBranches {
+		if m.project != nil {
+			hints = append(hints, keyHint("c", "create MR"))
+			hints = append(hints, keyHint("C", "compare"))
+			hints = append(hints, keyHint("d", "delete"))
 		}
 	}
 
@@ -4153,6 +4368,37 @@ func (m Model) viewDetailFooter() string {
 				keyHint("p", "pipelines"),
 				keyHint("Esc", "back"),
 				keyHint("q", "quit"),
+			}
+		}
+	case tabBranches:
+		if m.branchDetailView == branchViewCommits {
+			hints = []string{
+				keyHint("j/k", "scroll commits"),
+				keyHint("Esc", "back"),
+				keyHint("q", "quit"),
+			}
+		} else { // branchViewCompare
+			if m.branchCompareActivePanel == 0 {
+				hints = []string{
+					keyHint("j/k", "scroll commits"),
+					keyHint("Tab", "switch to files"),
+					keyHint("Esc", "back"),
+					keyHint("q", "quit"),
+				}
+			} else if m.branchCompareActivePanel == 1 {
+				hints = []string{
+					keyHint("j/k", "scroll files"),
+					keyHint("Tab", "switch to commits"),
+					keyHint("Enter", "view diff"),
+					keyHint("Esc", "back"),
+					keyHint("q", "quit"),
+				}
+			} else { // active panel 2: diff view
+				hints = []string{
+					keyHint("j/k", "scroll diff"),
+					keyHint("Esc", "back to files"),
+					keyHint("q", "quit"),
+				}
 			}
 		}
 	case tabPipelines:
@@ -4401,4 +4647,440 @@ func truncateLines(s string, maxLines, maxWidth int) string {
 		result = append(result, l)
 	}
 	return strings.Join(result, "\n")
+}
+
+// ─── Branches support ─────────────────────────────────────────────────────────
+
+func (m Model) cmdDeleteBranch(branch string) tea.Cmd {
+	if m.project == nil {
+		return nil
+	}
+	pid := m.project.ID
+	return func() tea.Msg {
+		err := m.client.DeleteBranch(pid, branch)
+		if err != nil {
+			return errMsg{err}
+		}
+		return actionDoneMsg{fmt.Sprintf("Branch %s deleted successfully!", branch)}
+	}
+}
+
+func (m Model) cmdLoadBranchCommits(branch string) tea.Cmd {
+	if m.project == nil {
+		return nil
+	}
+	pid := m.project.ID
+	return func() tea.Msg {
+		commits, err := m.client.ListCommits(pid, branch)
+		if err != nil {
+			return errMsg{err}
+		}
+		return branchCommitsLoadedMsg{branch: branch, commits: commits}
+	}
+}
+
+func (m Model) cmdCompareBranches(target, source string) tea.Cmd {
+	if m.project == nil {
+		return nil
+	}
+	pid := m.project.ID
+	return func() tea.Msg {
+		comp, err := m.client.Compare(pid, target, source)
+		if err != nil {
+			return errMsg{err}
+		}
+		return branchCompareLoadedMsg{
+			targetBranch: target,
+			sourceBranch: source,
+			compare:      comp,
+		}
+	}
+}
+
+func (m Model) startCreateMRFromBranch(srcBranch string) (Model, tea.Cmd) {
+	m.createMRStep = 1 // target branch selection step
+	m.createMRBranches = nil
+	m.createMRSrcCursor = 0
+	m.createMRTgtCursor = 0
+	m.createMRSourceBranch = srcBranch
+	m.createMRTargetBranch = ""
+	m.createMRDraft = false
+	m.createMRDeleteBranch = true
+	m.createMRSquash = false
+	m.createMRFormField = mrFieldTitle
+	m.createMRTitle.SetValue("")
+	m.createMRTitle.Blur()
+	m.createMRDescription.SetValue("")
+	m.createMRDescription.Blur()
+	m.prevState = m.state
+	m.state = stateCreateMR
+	return m, m.cmdLoadBranches()
+}
+
+func (m Model) compareBranchList() []string {
+	var list []string
+	if m.branchCursor >= len(m.branches) {
+		return nil
+	}
+	current := m.branches[m.branchCursor]
+	for _, b := range m.branches {
+		if b != current {
+			list = append(list, b)
+		}
+	}
+	return list
+}
+
+func (m Model) handleCompareBranchSelectKey(key string) (tea.Model, tea.Cmd) {
+	list := m.compareBranchList()
+	switch key {
+	case "esc":
+		m.state = m.prevState
+		return m, nil
+	case "j", "down":
+		if m.compareSelectCursor < len(list)-1 {
+			m.compareSelectCursor++
+		}
+	case "k", "up":
+		if m.compareSelectCursor > 0 {
+			m.compareSelectCursor--
+		}
+	case "enter":
+		if len(list) > 0 && m.compareSelectCursor < len(list) {
+			targetBranch := list[m.compareSelectCursor]
+			sourceBranch := m.branches[m.branchCursor]
+			m.state = stateLoading
+			m.loadMsg = fmt.Sprintf("Comparing %s with %s...", sourceBranch, targetBranch)
+			m.branchDetailView = branchViewCompare
+			return m, m.cmdCompareBranches(targetBranch, sourceBranch)
+		}
+	}
+	return m, nil
+}
+
+func (m Model) viewCompareBranchSelect() string {
+	var rows []string
+	rows = append(rows, subtitleStyle.Render("Select branch to compare with"), "")
+	
+	list := m.compareBranchList()
+	if len(list) == 0 {
+		rows = append(rows, dimStyle.Render("  No other branches found."))
+	} else {
+		maxVisible := 12
+		start := m.compareSelectCursor - maxVisible/2
+		if start < 0 {
+			start = 0
+		}
+		end := start + maxVisible
+		if end > len(list) {
+			end = len(list)
+			start = end - maxVisible
+			if start < 0 {
+				start = 0
+			}
+		}
+		if start > 0 {
+			rows = append(rows, dimStyle.Render(fmt.Sprintf("  ↑ %d more", start)))
+		}
+		for i := start; i < end; i++ {
+			b := list[i]
+			label := fmt.Sprintf("%-50s", truncate(b, 50))
+			if i == m.compareSelectCursor {
+				rows = append(rows, selectedStyle.Render("▶ "+label))
+			} else {
+				rows = append(rows, normalItemStyle.Render("  "+label))
+			}
+		}
+		if end < len(list) {
+			rows = append(rows, dimStyle.Render(fmt.Sprintf("  ↓ %d more", len(list)-end)))
+		}
+	}
+	rows = append(rows, "", dimStyle.Render("↑↓ navigate  Enter compare  Esc cancel"))
+
+	box := panelStyle.Padding(1, 3).Render(strings.Join(rows, "\n"))
+
+	bg := m.viewBackground()
+	dlgWidth := lipgloss.Width(box)
+	dlgHeight := lipgloss.Height(box)
+	targetHeight := m.height - m.getHeightOffset()
+	startX := (m.width - dlgWidth) / 2
+	startY := (targetHeight - dlgHeight) / 2
+	return overlay(bg, box, m.width, targetHeight, startX, startY)
+}
+
+func (m Model) viewBranchList(bodyH int) string {
+	if len(m.branches) == 0 {
+		return dimStyle.Padding(2).Render("No branches found.")
+	}
+
+	header := lipgloss.NewStyle().
+		Foreground(colorMuted).
+		PaddingLeft(2).
+		Render(fmt.Sprintf("%-60s", "Branch Name"))
+	header += "\n" + lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", m.width-2))
+
+	listH := bodyH - 3
+	if listH < 1 {
+		listH = 1
+	}
+
+	maxVisible := listH
+	start := m.branchCursor - maxVisible/2
+	if start < 0 {
+		start = 0
+	}
+	end := start + maxVisible
+	if end > len(m.branches) {
+		end = len(m.branches)
+		start = end - maxVisible
+		if start < 0 {
+			start = 0
+		}
+	}
+
+	var rows []string
+	for i := start; i < end; i++ {
+		b := m.branches[i]
+		selected := i == m.branchCursor
+
+		line := fmt.Sprintf("%-60s", truncate(b, 60))
+
+		if selected {
+			rows = append(rows, selectedStyle.Width(m.width-2).Render("▶ "+line))
+		} else {
+			rows = append(rows, normalItemStyle.Width(m.width-2).Render("  "+line))
+		}
+	}
+
+	return header + "\n" + strings.Join(rows, "\n")
+}
+
+func (m Model) viewBranchCommits(bodyH int) string {
+	if len(m.branchCommits) == 0 {
+		return dimStyle.Padding(2).Render("Loading commits...")
+	}
+
+	header := lipgloss.NewStyle().
+		Foreground(colorMuted).
+		PaddingLeft(2).
+		Render(fmt.Sprintf("Commits for branch: %s", m.branchDetailName))
+	header += "\n" + lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", m.width-2))
+
+	listH := bodyH - 3
+	if listH < 1 {
+		listH = 1
+	}
+
+	maxVisible := listH
+	start := m.branchCommitCursor - maxVisible/2
+	if start < 0 {
+		start = 0
+	}
+	end := start + maxVisible
+	if end > len(m.branchCommits) {
+		end = len(m.branchCommits)
+		start = end - maxVisible
+		if start < 0 {
+			start = 0
+		}
+	}
+
+	var rows []string
+	for i := start; i < end; i++ {
+		c := m.branchCommits[i]
+		selected := i == m.branchCommitCursor
+
+		line := fmt.Sprintf("%-10s  %-50s  %-15s  %s",
+			c.ShortID,
+			truncate(c.Title, 50),
+			truncate(c.AuthorName, 15),
+			dimStyle.Render(c.Date),
+		)
+
+		if selected {
+			rows = append(rows, selectedStyle.Width(m.width-2).Render("▶ "+line))
+		} else {
+			rows = append(rows, normalItemStyle.Width(m.width-2).Render("  "+line))
+		}
+	}
+
+	return header + "\n" + strings.Join(rows, "\n")
+}
+
+func (m Model) viewBranchCompare(bodyH int) string {
+	if m.branchCompare == nil {
+		return dimStyle.Padding(2).Render("Comparing branch...")
+	}
+
+	header := lipgloss.NewStyle().
+		Foreground(colorMuted).
+		PaddingLeft(2).
+		Render(fmt.Sprintf("Compare: %s ... %s (target ... source)", m.branchCompareTarget, m.branchDetailName))
+	header += "\n" + lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", m.width-2))
+
+	bodyH -= 3 // room for header
+
+	if m.branchCompareActivePanel == 2 {
+		// Render diff lines for selected file
+		if len(m.branchCompare.Diffs) == 0 || m.branchCompareDiffIdx >= len(m.branchCompare.Diffs) {
+			return header + "\n" + dimStyle.Render("No diff files found.")
+		}
+		f := m.branchCompare.Diffs[m.branchCompareDiffIdx]
+		
+		var rows []string
+		rows = append(rows, subtitleStyle.Render(fmt.Sprintf("Diff: %s", f.NewPath)), "")
+		
+		diffHeight := bodyH - 3
+		if diffHeight < 1 {
+			diffHeight = 1
+		}
+
+		maxLines := len(f.Lines)
+		if m.branchCompareLineIdx < 0 {
+			m.branchCompareLineIdx = 0
+		}
+		if m.branchCompareLineIdx >= maxLines {
+			m.branchCompareLineIdx = maxLines - 1
+		}
+
+		start := m.branchCompareScrollOffset
+		if m.branchCompareLineIdx < start {
+			start = m.branchCompareLineIdx
+		}
+		if m.branchCompareLineIdx >= start + diffHeight {
+			start = m.branchCompareLineIdx - diffHeight + 1
+		}
+		if start < 0 {
+			start = 0
+		}
+		m.branchCompareScrollOffset = start
+
+		end := start + diffHeight
+		if end > maxLines {
+			end = maxLines
+		}
+
+		for i := start; i < end; i++ {
+			dl := f.Lines[i]
+			selected := i == m.branchCompareLineIdx
+			content := dl.Content
+			avail := m.width - 5
+			if avail < 1 {
+				avail = 1
+			}
+			if lipgloss.Width(content) > avail {
+				content = ansi.Truncate(content, avail-1, "…")
+			}
+
+			var rendered string
+			switch dl.Type {
+			case "added":
+				st := lipgloss.NewStyle().Foreground(colorSuccess)
+				if selected {
+					st = st.Background(colorBgHover).Bold(true)
+				}
+				rendered = st.Render("+ " + content)
+			case "removed":
+				st := lipgloss.NewStyle().Foreground(colorError)
+				if selected {
+					st = st.Background(colorBgHover).Bold(true)
+				}
+				rendered = st.Render("- " + content)
+			case "hunk":
+				st := lipgloss.NewStyle().Foreground(colorInfo).Italic(true)
+				if selected {
+					st = st.Background(colorBgHover).Bold(true)
+				}
+				rendered = st.Render("  " + content)
+			default:
+				st := lipgloss.NewStyle().Foreground(colorTextDim)
+				if selected {
+					st = st.Background(colorBgHover).Bold(true)
+				}
+				rendered = st.Render("  " + content)
+			}
+			rows = append(rows, rendered)
+		}
+
+		return header + "\n" + strings.Join(rows, "\n")
+	}
+
+	// Render splits: Commits panel (left) and Files panel (right)
+	leftW := m.width / 2
+	rightW := m.width - leftW - 1
+
+	// Commits panel content
+	var leftRows []string
+	leftRows = append(leftRows, subtitleStyle.Render("Commits (in source only)"), "")
+	if len(m.branchCompare.Commits) == 0 {
+		leftRows = append(leftRows, dimStyle.Render("No commits."))
+	} else {
+		maxVisible := bodyH - 3
+		start := m.branchCompareCursor - maxVisible/2
+		if start < 0 {
+			start = 0
+		}
+		end := start + maxVisible
+		if end > len(m.branchCompare.Commits) {
+			end = len(m.branchCompare.Commits)
+			start = end - maxVisible
+			if start < 0 {
+				start = 0
+			}
+		}
+		for i := start; i < end; i++ {
+			c := m.branchCompare.Commits[i]
+			selected := i == m.branchCompareCursor && m.branchCompareActivePanel == 0
+			line := fmt.Sprintf("%s %s", c.ShortID, truncate(c.Title, leftW-10))
+			if selected {
+				leftRows = append(leftRows, selectedStyle.Width(leftW-2).Render("▶ "+line))
+			} else {
+				leftRows = append(leftRows, normalItemStyle.Width(leftW-2).Render("  "+line))
+			}
+		}
+	}
+
+	// Files panel content
+	var rightRows []string
+	rightRows = append(rightRows, subtitleStyle.Render("Files Changed"), "")
+	if len(m.branchCompare.Diffs) == 0 {
+		rightRows = append(rightRows, dimStyle.Render("No files changed."))
+	} else {
+		maxVisible := bodyH - 3
+		start := m.branchCompareDiffIdx - maxVisible/2
+		if start < 0 {
+			start = 0
+		}
+		end := start + maxVisible
+		if end > len(m.branchCompare.Diffs) {
+			end = len(m.branchCompare.Diffs)
+			start = end - maxVisible
+			if start < 0 {
+				start = 0
+			}
+		}
+		for i := start; i < end; i++ {
+			f := m.branchCompare.Diffs[i]
+			selected := i == m.branchCompareDiffIdx && m.branchCompareActivePanel == 1
+			line := fmt.Sprintf("+%d/-%d %s", f.Added, f.Deleted, truncate(f.NewPath, rightW-12))
+			if selected {
+				rightRows = append(rightRows, selectedStyle.Width(rightW-2).Render("▶ "+line))
+			} else {
+				rightRows = append(rightRows, normalItemStyle.Width(rightW-2).Render("  "+line))
+			}
+		}
+	}
+
+	// Combine left and right panels side by side
+	leftPanel := lipgloss.NewStyle().Width(leftW).Height(bodyH).Render(strings.Join(leftRows, "\n"))
+	rightPanel := lipgloss.NewStyle().Width(rightW).Height(bodyH).Render(strings.Join(rightRows, "\n"))
+	
+	sepLines := make([]string, bodyH)
+	for i := 0; i < bodyH; i++ {
+		sepLines[i] = lipgloss.NewStyle().Foreground(colorBorder).Render("│")
+	}
+	separator := strings.Join(sepLines, "\n")
+
+	panels := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, separator, rightPanel)
+	return header + "\n" + panels
 }

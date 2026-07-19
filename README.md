@@ -7,6 +7,7 @@ Built with [BubbleTea](https://github.com/charmbracelet/bubbletea) and the offic
 ## Features
 
 - 🔀 **Merge Requests** — list, filter by state (open/merged/closed), view details, approve, merge, close, edit existing MRs, and **create new MRs** via an interactive wizard
+- 🌿 **Branches** — list branches, delete branch (with confirmation), create MR directly from a branch, view commits history, and compare branches (showing commit differences and changed files diff)
 - 🚀 **Pipelines** — list, view details (with dual-pane layout showing jobs and statuses), automatic background refresh (every 5s) for active pipelines, retry/cancel pipelines, restart individual jobs, scroll/search job trace logs, and open traces directly in your external editor
 - 🐛 **Issues** — list, view details
 - 📁 **Projects** — browse and switch projects on the current server
@@ -119,22 +120,24 @@ Both SSH and HTTPS remotes are supported:
 
 ### Main view
 
-| Key               | Action                                         |
-| ----------------- | ---------------------------------------------- |
-| `Tab` / `→`       | Next tab                                       |
-| `Shift+Tab` / `←` | Previous tab                                   |
-| `1–4`             | Jump to tab (MRs, Pipelines, Issues, Projects) |
-| `j` / `↓`         | Move down                                      |
-| `k` / `↑`         | Move up                                        |
-| `Enter`           | Open detail / select project                   |
-| `s`               | Cycle MR state filter (open→merged→closed→all) |
-| `c`               | Create new MR (MR tab only)                    |
-| `e`               | Edit selected MR (MR tab only)                 |
-| `r`               | Refresh current tab                            |
-| `n` / `p`         | Next / previous page                           |
-| `P`               | Switch project                                 |
-| `S`               | Switch server                                  |
-| `q` / `Ctrl+C`    | Quit                                           |
+| Key               | Action                                                      |
+| ----------------- | ----------------------------------------------------------- |
+| `Tab` / `→`       | Next tab                                                    |
+| `Shift+Tab` / `←` | Previous tab                                                |
+| `1–5`             | Jump to tab (MRs, Branches, Pipelines, Issues, Projects)    |
+| `j` / `↓`         | Move down                                                   |
+| `k` / `↑`         | Move up                                                     |
+| `Enter`           | Open detail / select project / show branch commits          |
+| `s`               | Cycle MR state filter (open→merged→closed→all)              |
+| `c`               | Create new MR (MR and Branches tabs)                        |
+| `C`               | Compare branch with another (Branches tab only)             |
+| `d`               | Delete branch (Branches tab only)                           |
+| `e`               | Edit selected MR (MR tab only)                              |
+| `r`               | Refresh current tab                                         |
+| `n` / `p`         | Next / previous page                                        |
+| `P`               | Switch project                                              |
+| `S`               | Switch server                                               |
+| `q` / `Ctrl+C`    | Quit                                                        |
 
 ### MR detail
 
@@ -151,6 +154,16 @@ Both SSH and HTTPS remotes are supported:
 | `o`       | Open link selector     |
 | `p`       | Open pipeline selector |
 | `Esc`     | Back to list           |
+
+### Branch commits & Compare detail
+
+| Key       | Action                                                             |
+| --------- | ------------------------------------------------------------------ |
+| `j` / `k` | Scroll commits list / changed files list / diff lines              |
+| `Tab`     | Toggle focus between commits panel and files panel (compare view)  |
+| `Enter`   | View branch commits (main list) / expand file diff (compare files) |
+| `Esc`     | Go back (exit diff, exit comparison list, or return to branch list)|
+
 
 ### Create MR wizard
 
