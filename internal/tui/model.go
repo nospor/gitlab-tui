@@ -991,6 +991,22 @@ func (m Model) handleMainKey(key string) (tea.Model, tea.Cmd) {
 		if m.tab == tabMRs && m.project != nil {
 			return m.startEditMR()
 		}
+	case "x":
+		if m.tab == tabMRs && m.project != nil && m.mrCursor < len(m.mrs) {
+			mr := m.mrs[m.mrCursor]
+			if mr.State == "opened" {
+				return m.promptConfirm("Close MR", fmt.Sprintf("Close MR !%d?", mr.IID),
+					m.cmdCloseMR(mr.IID))
+			}
+		}
+	case "O":
+		if m.tab == tabMRs && m.project != nil && m.mrCursor < len(m.mrs) {
+			mr := m.mrs[m.mrCursor]
+			if mr.State == "closed" {
+				return m.promptConfirm("Reopen MR", fmt.Sprintf("Reopen MR !%d?", mr.IID),
+					m.cmdReopenMR(mr.IID))
+			}
+		}
 	case "s":
 		// Switch MR state filter
 		if m.tab == tabMRs {
@@ -1148,6 +1164,12 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 				return m.promptConfirm("Close MR", fmt.Sprintf("Close MR !%d?", m.mrDetail.IID),
 					m.cmdCloseMR(m.mrDetail.IID))
 			}
+		case "O":
+			if m.mrDetail.State == "closed" {
+				return m.promptConfirm("Reopen MR", fmt.Sprintf("Reopen MR !%d?", m.mrDetail.IID),
+					m.cmdReopenMR(m.mrDetail.IID))
+			}
+
 		case "+":
 			m.state = stateLoading
 			m.prevState = stateDetail
@@ -2474,6 +2496,17 @@ func (m Model) cmdCloseMR(iid int) tea.Cmd {
 		return actionDoneMsg{"MR closed!"}
 	}
 }
+
+func (m Model) cmdReopenMR(iid int) tea.Cmd {
+	pid := m.project.ID
+	return func() tea.Msg {
+		if err := m.client.ReopenMR(pid, iid); err != nil {
+			return errMsg{err}
+		}
+		return actionDoneMsg{"MR reopened!"}
+	}
+}
+
 
 func (m Model) cmdRetryPipeline(id int) tea.Cmd {
 	pid := m.project.ID
@@ -4395,6 +4428,14 @@ func (m Model) viewFooter() string {
 		if m.project != nil {
 			hints = append(hints, keyHint("c", "create MR"))
 			hints = append(hints, keyHint("e", "edit MR"))
+			if m.mrCursor < len(m.mrs) {
+				mr := m.mrs[m.mrCursor]
+				if mr.State == "opened" {
+					hints = append(hints, keyHint("x", "close"))
+				} else if mr.State == "closed" {
+					hints = append(hints, keyHint("O", "reopen"))
+				}
+			}
 		}
 	}
 
@@ -4466,15 +4507,21 @@ func (m Model) viewDetailFooter() string {
 				keyHint("C", "comment"),
 				keyHint("e", "edit"),
 				keyHint("a", "approve"),
-				keyHint("m", "merge"),
-				keyHint("x", "close"),
+			}
+			if m.mrDetail != nil && m.mrDetail.State == "opened" {
+				hints = append(hints, keyHint("m", "merge"))
+				hints = append(hints, keyHint("x", "close"))
+			} else if m.mrDetail != nil && m.mrDetail.State == "closed" {
+				hints = append(hints, keyHint("O", "reopen"))
+			}
+			hints = append(hints,
 				keyHint("+", "vote up"),
 				keyHint("-", "vote down"),
 				keyHint("o", "open link"),
 				keyHint("p", "pipelines"),
 				keyHint("Esc", "back"),
 				keyHint("q", "quit"),
-			}
+			)
 		}
 	case tabBranches:
 		if m.branchDetailView == branchViewCommits {

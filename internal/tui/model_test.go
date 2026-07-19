@@ -2,6 +2,7 @@ package tui
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -119,3 +120,92 @@ func TestCompareBranchKey(t *testing.T) {
 	// Call View to check if it panics or crashes
 	_ = newModel.View()
 }
+
+func TestReopenMRKey(t *testing.T) {
+	InitTheme("catppuccin")
+
+	m := Model{
+		cfg: &config.Config{
+			Servers: []config.Server{
+				{Name: "GitLab", URL: "https://gitlab.com"},
+			},
+		},
+		tab:     tabMRs,
+		state:   stateDetail,
+		project: &gitlab.ProjectInfo{ID: 1},
+		mrDetail: &gitlab.MRInfo{
+			IID:   42,
+			Title: "Test MR",
+			State: "closed",
+		},
+		width:  80,
+		height: 24,
+	}
+
+	footer := m.viewDetailFooter()
+	if !strings.Contains(footer, "O") || !strings.Contains(footer, "reopen") {
+		t.Errorf("expected footer to contain 'O reopen', got: %s", footer)
+	}
+
+	// Update with key "O"
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'O'}}
+	res, _ := m.Update(msg)
+
+	newModel := res.(Model)
+	if newModel.state != stateConfirm {
+		t.Errorf("expected state to be stateConfirm, got %v", newModel.state)
+	}
+	if newModel.confirm == nil || newModel.confirm.label != "Reopen MR !42?" {
+		t.Errorf("expected confirmation prompt for MR 42, got %v", newModel.confirm)
+	}
+
+	// Call View to check if it panics or crashes
+	_ = newModel.View()
+}
+
+func TestReopenMRKeyFromList(t *testing.T) {
+	InitTheme("catppuccin")
+
+	m := Model{
+		cfg: &config.Config{
+			Servers: []config.Server{
+				{Name: "GitLab", URL: "https://gitlab.com"},
+			},
+		},
+		tab:     tabMRs,
+		state:   stateMain,
+		project: &gitlab.ProjectInfo{ID: 1},
+		mrs: []*gitlab.MRInfo{
+			{
+				IID:   100,
+				Title: "Closed List MR",
+				State: "closed",
+			},
+		},
+		mrCursor: 0,
+		width:    80,
+		height:   24,
+	}
+
+	footer := m.viewFooter()
+	if !strings.Contains(footer, "O") || !strings.Contains(footer, "reopen") {
+		t.Errorf("expected list footer to contain 'O reopen', got: %s", footer)
+	}
+
+	// Update with key "O"
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'O'}}
+	res, _ := m.Update(msg)
+
+	newModel := res.(Model)
+	if newModel.state != stateConfirm {
+		t.Errorf("expected state to be stateConfirm, got %v", newModel.state)
+	}
+	if newModel.confirm == nil || newModel.confirm.label != "Reopen MR !100?" {
+		t.Errorf("expected confirmation prompt for MR 100, got %v", newModel.confirm)
+	}
+
+	// Call View to check if it panics or crashes
+	_ = newModel.View()
+}
+
+

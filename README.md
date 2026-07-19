@@ -133,6 +133,8 @@ Both SSH and HTTPS remotes are supported:
 | `C`               | Compare branch with another (Branches tab only)             |
 | `d`               | Delete branch (Branches tab only)                           |
 | `e`               | Edit selected MR (MR tab only)                              |
+| `x`               | Close selected MR (MR tab only)                             |
+| `O`               | Reopen selected MR (MR tab only)                            |
 | `r`               | Refresh current tab                                         |
 | `n` / `p`         | Next / previous page                                        |
 | `P`               | Switch project                                              |
@@ -150,6 +152,7 @@ Both SSH and HTTPS remotes are supported:
 | `a`       | Approve MR             |
 | `m`       | Merge MR               |
 | `x`       | Close MR               |
+| `O`       | Reopen MR (closed MRs) |
 | `+` / `-` | Vote up / down         |
 | `o`       | Open link selector     |
 | `p`       | Open pipeline selector |

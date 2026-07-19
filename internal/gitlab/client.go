@@ -600,6 +600,16 @@ func (c *Client) CloseMR(projectID, mriid int) error {
 	return err
 }
 
+// ReopenMR reopens a merge request.
+func (c *Client) ReopenMR(projectID, mriid int) error {
+	state := "reopen"
+	_, _, err := c.raw.MergeRequests.UpdateMergeRequest(projectID, int64(mriid), &gl.UpdateMergeRequestOptions{
+		StateEvent: &state,
+	})
+	return err
+}
+
+
 // ToggleVoteMR adds or removes a thumbsup/thumbsdown award emoji on a merge request.
 // If the authenticated user (username) has already awarded the same emoji, it is
 // deleted (toggle off) and the function returns false. Otherwise the emoji is created
