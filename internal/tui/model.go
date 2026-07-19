@@ -461,7 +461,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case mrLoadedMsg:
 		m.mrs = msg.items
 		m.mrTotalPage = msg.totalPages
-		m.mrCursor = 0
+		if m.mrCursor >= len(m.mrs) {
+			m.mrCursor = len(m.mrs) - 1
+		}
+		if m.mrCursor < 0 {
+			m.mrCursor = 0
+		}
 		if m.state == stateLoading {
 			m.state = stateMain
 		}
@@ -527,7 +532,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case pipelineLoadedMsg:
 		m.pipelines = msg.items
 		m.pipelineTotalPage = msg.totalPages
-		m.pipelineCursor = 0
+		if m.pipelineCursor >= len(m.pipelines) {
+			m.pipelineCursor = len(m.pipelines) - 1
+		}
+		if m.pipelineCursor < 0 {
+			m.pipelineCursor = 0
+		}
 		return m, nil
 
 	case pipelineJobsLoadedMsg:
@@ -596,13 +606,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case issueLoadedMsg:
 		m.issues = msg.items
 		m.issueTotalPage = msg.totalPages
-		m.issueCursor = 0
+		if m.issueCursor >= len(m.issues) {
+			m.issueCursor = len(m.issues) - 1
+		}
+		if m.issueCursor < 0 {
+			m.issueCursor = 0
+		}
 		return m, nil
 
 	case projectLoadedMsg:
 		m.projects = msg.items
 		m.projectTotalPage = msg.totalPages
-		m.projectCursor = 0
+		if m.projectCursor >= len(m.projects) {
+			m.projectCursor = len(m.projects) - 1
+		}
+		if m.projectCursor < 0 {
+			m.projectCursor = 0
+		}
 		return m, nil
 
 	case actionDoneMsg:
@@ -613,12 +633,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(
 				m.cmdLoadMRDetail(m.mrDetail.IID),
 				m.cmdLoadMRDiscussions(m.mrDetail.IID),
+				m.cmdLoadMRs(),
 			)
 		}
 		if m.state == stateDetail && m.tab == tabPipelines && m.pipelineDetail != nil {
 			return m, tea.Batch(
 				m.cmdLoadPipelineDetail(m.pipelineDetail.ID),
 				m.cmdLoadPipelineJobs(m.pipelineDetail.ID),
+				m.cmdLoadPipelines(),
 			)
 		}
 		return m, m.reloadCurrent()
@@ -755,8 +777,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.project = m.projects[m.projectCursor]
 					m.tab = tabMRs
 					m.mrPage = 1
+					m.mrCursor = 0
 					m.pipelinePage = 1
+					m.pipelineCursor = 0
 					m.issuePage = 1
+					m.issueCursor = 0
 					m.projectSearch.Blur()
 					return m, m.cmdLoadMRs()
 				}
@@ -764,6 +789,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "esc":
 				m.projectSearch.SetValue("")
 				m.projectPage = 1
+				m.projectCursor = 0
 				return m, m.cmdLoadProjects()
 			case "pgdown":
 				return m.nextPage()
@@ -773,6 +799,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				var cmd tea.Cmd
 				m.projectSearch, cmd = m.projectSearch.Update(msg)
 				m.projectPage = 1
+				m.projectCursor = 0
 				return m, tea.Batch(cmd, m.cmdLoadProjects())
 			}
 		}
@@ -921,6 +948,7 @@ func (m Model) handleMainKey(key string) (tea.Model, tea.Cmd) {
 		} else {
 			m.projectSearch.Blur()
 		}
+		m = m.resetCursorForTab(m.tab)
 		return m, m.reloadCurrent()
 	case "shift+tab", "left", "h":
 		m.tab = (m.tab - 1 + tabCount) % tabCount
@@ -929,26 +957,36 @@ func (m Model) handleMainKey(key string) (tea.Model, tea.Cmd) {
 		} else {
 			m.projectSearch.Blur()
 		}
+		m = m.resetCursorForTab(m.tab)
 		return m, m.reloadCurrent()
 	case "1":
 		m.tab = tabMRs
 		m.projectSearch.Blur()
+		m.mrCursor = 0
+		m.mrPage = 1
 		return m, m.cmdLoadMRs()
 	case "2":
 		m.tab = tabBranches
 		m.projectSearch.Blur()
+		m.branchCursor = 0
 		return m, m.cmdLoadBranches()
 	case "3":
 		m.tab = tabPipelines
 		m.projectSearch.Blur()
+		m.pipelineCursor = 0
+		m.pipelinePage = 1
 		return m, m.cmdLoadPipelines()
 	case "4":
 		m.tab = tabIssues
 		m.projectSearch.Blur()
+		m.issueCursor = 0
+		m.issuePage = 1
 		return m, m.cmdLoadIssues()
 	case "5":
 		m.tab = tabProjects
 		m.projectSearch.Focus()
+		m.projectCursor = 0
+		m.projectPage = 1
 		return m, m.cmdLoadProjects()
 	case "j", "down":
 		m.moveCursorDown()
@@ -1021,6 +1059,7 @@ func (m Model) handleMainKey(key string) (tea.Model, tea.Cmd) {
 				m.mrState = gitlab.MRStateOpened
 			}
 			m.mrPage = 1
+			m.mrCursor = 0
 			return m, m.cmdLoadMRs()
 		}
 	case "S":
@@ -1894,6 +1933,7 @@ func (m Model) handleServerSelectKey(key string) (tea.Model, tea.Cmd) {
 		m.state = stateMain
 		m.tab = tabProjects
 		m.projectPage = 1
+		m.projectCursor = 0
 		m.projectSearch.SetValue("")
 		m.projectSearch.Focus()
 		return m, m.cmdLoadProjects()
@@ -2320,21 +2360,25 @@ func (m Model) nextPage() (Model, tea.Cmd) {
 	case tabMRs:
 		if m.mrPage < m.mrTotalPage {
 			m.mrPage++
+			m.mrCursor = 0
 			return m, m.cmdLoadMRs()
 		}
 	case tabPipelines:
 		if m.pipelinePage < m.pipelineTotalPage {
 			m.pipelinePage++
+			m.pipelineCursor = 0
 			return m, m.cmdLoadPipelines()
 		}
 	case tabIssues:
 		if m.issuePage < m.issueTotalPage {
 			m.issuePage++
+			m.issueCursor = 0
 			return m, m.cmdLoadIssues()
 		}
 	case tabProjects:
 		if m.projectPage < m.projectTotalPage {
 			m.projectPage++
+			m.projectCursor = 0
 			return m, m.cmdLoadProjects()
 		}
 	}
@@ -2346,25 +2390,49 @@ func (m Model) prevPage() (Model, tea.Cmd) {
 	case tabMRs:
 		if m.mrPage > 1 {
 			m.mrPage--
+			m.mrCursor = 0
 			return m, m.cmdLoadMRs()
 		}
 	case tabPipelines:
 		if m.pipelinePage > 1 {
 			m.pipelinePage--
+			m.pipelineCursor = 0
 			return m, m.cmdLoadPipelines()
 		}
 	case tabIssues:
 		if m.issuePage > 1 {
 			m.issuePage--
+			m.issueCursor = 0
 			return m, m.cmdLoadIssues()
 		}
 	case tabProjects:
 		if m.projectPage > 1 {
 			m.projectPage--
+			m.projectCursor = 0
 			return m, m.cmdLoadProjects()
 		}
 	}
 	return m, nil
+}
+
+func (m Model) resetCursorForTab(tab tabID) Model {
+	switch tab {
+	case tabMRs:
+		m.mrCursor = 0
+		m.mrPage = 1
+	case tabBranches:
+		m.branchCursor = 0
+	case tabPipelines:
+		m.pipelineCursor = 0
+		m.pipelinePage = 1
+	case tabIssues:
+		m.issueCursor = 0
+		m.issuePage = 1
+	case tabProjects:
+		m.projectCursor = 0
+		m.projectPage = 1
+	}
+	return m
 }
 
 func (m Model) reloadCurrent() tea.Cmd {
