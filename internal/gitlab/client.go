@@ -1221,3 +1221,47 @@ func (c *Client) Compare(projectID int, from, to string) (*CompareInfo, error) {
 	}, nil
 }
 
+// GetCommitDiffs fetches the diffs for a specific commit.
+func (c *Client) GetCommitDiffs(projectID int, sha string) ([]*DiffFile, error) {
+	var result []*DiffFile
+	page := int64(1)
+	for {
+		opts := &gl.GetCommitDiffOptions{
+			ListOptions: gl.ListOptions{
+				Page:    page,
+				PerPage: 100,
+			},
+		}
+		diffs, resp, err := c.raw.Commits.GetCommitDiff(projectID, sha, opts)
+		if err != nil {
+			return nil, fmt.Errorf("getting commit diffs (page %d): %w", page, err)
+		}
+
+		for _, d := range diffs {
+			f := &DiffFile{
+				OldPath:   d.OldPath,
+				NewPath:   d.NewPath,
+				TooLarge:  false,
+				Collapsed: false,
+			}
+			lines := parseDiffLines(d.Diff)
+			for _, l := range lines {
+				if l.Type == "added" {
+					f.Added++
+				} else if l.Type == "removed" {
+					f.Deleted++
+				}
+			}
+			f.Lines = lines
+			result = append(result, f)
+		}
+
+		if resp.NextPage == 0 {
+			break
+		}
+		page = resp.NextPage
+	}
+	return result, nil
+}
+
+

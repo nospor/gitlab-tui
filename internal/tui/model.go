@@ -137,6 +137,10 @@ type (
 		sourceBranch string
 		compare      *gitlab.CompareInfo
 	}
+	commitDiffsLoadedMsg struct {
+		sha   string
+		files []*gitlab.DiffFile
+	}
 )
 
 // ─── Confirmation action ──────────────────────────────────────────────────────
@@ -244,18 +248,26 @@ type Model struct {
 	branchCursor         int
 
 	// Branch detail/commits/compare view
-	branchDetailView          branchDetailView
-	branchDetailName          string // source branch
-	branchCommits             []*gitlab.CommitInfo
-	branchCommitCursor        int
-	branchCompare             *gitlab.CompareInfo
-	branchCompareTarget       string
-	branchCompareCursor       int
-	branchCompareDiffIdx      int
-	branchCompareLineIdx      int
-	branchCompareActivePanel  int // 0 = commits list, 1 = files list, 2 = diff lines
-	branchCompareScrollOffset int
-	compareSelectCursor       int
+	branchDetailView             branchDetailView
+	branchDetailName             string // source branch
+	branchCommits                []*gitlab.CommitInfo
+	branchCommitCursor           int
+	branchCompare                *gitlab.CompareInfo
+	branchCompareTarget          string
+	branchCompareCursor          int
+	branchCompareDiffIdx         int
+	branchCompareLineIdx         int
+	branchCompareActivePanel     int // 0 = commits list, 1 = files list, 2 = diff lines
+	branchCompareScrollOffset    int
+	compareSelectCursor          int
+	branchCommitDiffFiles        []*gitlab.DiffFile
+	branchCommitDiffFileIdx      int
+	branchCommitDiffLineCursor   int
+	branchCommitDiffScrollOffset int
+	branchCommitDiffPanelOpen    bool
+	branchCommitDiffLoading      bool
+	branchCommitDiffSHA          string
+
 
 	// Server select
 	serverCursor int
@@ -652,6 +664,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case commitDiffsLoadedMsg:
+		m.branchCommitDiffLoading = false
+		if len(m.branchCommits) > 0 && m.branchCommitCursor < len(m.branchCommits) {
+			currentSHA := m.branchCommits[m.branchCommitCursor].ID
+			if msg.sha == currentSHA {
+				m.branchCommitDiffFiles = msg.files
+				m.branchCommitDiffSHA = msg.sha
+				m.branchCommitDiffFileIdx = 0
+				m.branchCommitDiffLineCursor = 0
+				m.branchCommitDiffScrollOffset = 0
+			}
+		}
+		return m, nil
+
+
 	case branchCompareLoadedMsg:
 		m.branchCompare = msg.compare
 		m.branchCompareTarget = msg.targetBranch
@@ -764,6 +791,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.branchCompareActivePanel = 1
 				return m, nil
 			}
+			if m.tab == tabBranches && m.branchDetailView == branchViewCommits && m.branchCommitDiffPanelOpen {
+				m.branchCommitDiffPanelOpen = false
+				return m, nil
+			}
 			if m.mrDiffPanelOpen {
 				// Close diff panel first
 				m.mrDiffPanelOpen = false
@@ -812,6 +843,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.branchCompareDiffIdx = 0
 			m.branchCompareLineIdx = 0
 			m.branchCompareActivePanel = 0
+			m.branchCommitDiffFiles = nil
+			m.branchCommitDiffFileIdx = 0
+			m.branchCommitDiffLineCursor = 0
+			m.branchCommitDiffScrollOffset = 0
+			m.branchCommitDiffPanelOpen = false
+			m.branchCommitDiffLoading = false
+			m.branchCommitDiffSHA = ""
+
 			if len(m.mrs) == 0 {
 				m.state = stateLoading
 				m.loadMsg = "Loading merge requests..."
@@ -1225,14 +1264,65 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 		}
 	case tabBranches:
 		if m.branchDetailView == branchViewCommits {
-			switch key {
-			case "j", "down":
-				if m.branchCommitCursor < len(m.branchCommits)-1 {
-					m.branchCommitCursor++
+			if m.branchCommitDiffPanelOpen {
+				switch key {
+				case "tab":
+					m.branchCommitDiffPanelOpen = false
+					return m, nil
+				case "j", "down":
+					m.branchCommitDiffLineCursorDown()
+					m.updateBranchCommitDiffScroll()
+					return m, nil
+				case "k", "up":
+					m.branchCommitDiffLineCursorUp()
+					m.updateBranchCommitDiffScroll()
+					return m, nil
+				case "J":
+					m.branchCommitDiffNextHunk()
+					m.updateBranchCommitDiffScroll()
+					return m, nil
+				case "K":
+					m.branchCommitDiffPrevHunk()
+					m.updateBranchCommitDiffScroll()
+					return m, nil
+				case "n":
+					if m.branchCommitDiffFileIdx < len(m.branchCommitDiffFiles)-1 {
+						m.branchCommitDiffFileIdx++
+						m.branchCommitDiffLineCursor = 0
+						m.branchCommitDiffScrollOffset = 0
+						m.updateBranchCommitDiffScroll()
+					}
+					return m, nil
+				case "p":
+					if m.branchCommitDiffFileIdx > 0 {
+						m.branchCommitDiffFileIdx--
+						m.branchCommitDiffLineCursor = 0
+						m.branchCommitDiffScrollOffset = 0
+						m.updateBranchCommitDiffScroll()
+					}
+					return m, nil
 				}
-			case "k", "up":
-				if m.branchCommitCursor > 0 {
-					m.branchCommitCursor--
+			} else {
+				switch key {
+				case "j", "down":
+					if m.branchCommitCursor < len(m.branchCommits)-1 {
+						m.branchCommitCursor++
+					}
+				case "k", "up":
+					if m.branchCommitCursor > 0 {
+						m.branchCommitCursor--
+					}
+				case "tab":
+					m.branchCommitDiffPanelOpen = true
+					if len(m.branchCommits) > 0 && m.branchCommitCursor < len(m.branchCommits) {
+						c := m.branchCommits[m.branchCommitCursor]
+						if m.branchCommitDiffSHA != c.ID {
+							m.branchCommitDiffLoading = true
+							m.branchCommitDiffFiles = nil
+							return m, m.cmdLoadCommitDiff(c.ID)
+						}
+					}
+					return m, nil
 				}
 			}
 		} else { // branchViewCompare
@@ -4372,10 +4462,21 @@ func (m Model) viewDetailFooter() string {
 		}
 	case tabBranches:
 		if m.branchDetailView == branchViewCommits {
-			hints = []string{
-				keyHint("j/k", "scroll commits"),
-				keyHint("Esc", "back"),
-				keyHint("q", "quit"),
+			if m.branchCommitDiffPanelOpen {
+				hints = []string{
+					keyHint("j/k", "scroll diff"),
+					keyHint("n/p", "next/prev file"),
+					keyHint("J/K", "next/prev hunk"),
+					keyHint("Tab/Esc", "close diff"),
+					keyHint("q", "quit"),
+				}
+			} else {
+				hints = []string{
+					keyHint("j/k", "scroll commits"),
+					keyHint("Tab", "view diff"),
+					keyHint("Esc", "back"),
+					keyHint("q", "quit"),
+				}
 			}
 		} else { // branchViewCompare
 			if m.branchCompareActivePanel == 0 {
@@ -4856,6 +4957,10 @@ func (m Model) viewBranchList(bodyH int) string {
 }
 
 func (m Model) viewBranchCommits(bodyH int) string {
+	if m.branchCommitDiffPanelOpen {
+		return m.viewBranchCommitsSplit(bodyH)
+	}
+
 	if len(m.branchCommits) == 0 {
 		return dimStyle.Padding(2).Render("Loading commits...")
 	}
@@ -5084,3 +5189,304 @@ func (m Model) viewBranchCompare(bodyH int) string {
 	panels := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, separator, rightPanel)
 	return header + "\n" + panels
 }
+
+func (m Model) cmdLoadCommitDiff(sha string) tea.Cmd {
+	if m.project == nil {
+		return nil
+	}
+	pid := m.project.ID
+	return func() tea.Msg {
+		files, err := m.client.GetCommitDiffs(pid, sha)
+		if err != nil {
+			return errMsg{err}
+		}
+		return commitDiffsLoadedMsg{sha: sha, files: files}
+	}
+}
+
+func (m *Model) branchCommitDiffLineCursorDown() {
+	if len(m.branchCommitDiffFiles) == 0 {
+		return
+	}
+	f := m.branchCommitDiffFiles[m.branchCommitDiffFileIdx]
+	if m.branchCommitDiffLineCursor < len(f.Lines)-1 {
+		m.branchCommitDiffLineCursor++
+	} else if m.branchCommitDiffFileIdx < len(m.branchCommitDiffFiles)-1 {
+		// Move to next file
+		m.branchCommitDiffFileIdx++
+		m.branchCommitDiffLineCursor = 0
+		m.branchCommitDiffScrollOffset = 0
+	}
+}
+
+func (m *Model) branchCommitDiffLineCursorUp() {
+	if m.branchCommitDiffLineCursor > 0 {
+		m.branchCommitDiffLineCursor--
+	} else if m.branchCommitDiffFileIdx > 0 {
+		m.branchCommitDiffFileIdx--
+		m.branchCommitDiffScrollOffset = 0
+		if len(m.branchCommitDiffFiles[m.branchCommitDiffFileIdx].Lines) > 0 {
+			m.branchCommitDiffLineCursor = len(m.branchCommitDiffFiles[m.branchCommitDiffFileIdx].Lines) - 1
+		}
+	}
+}
+
+func (m *Model) branchCommitDiffNextHunk() {
+	if len(m.branchCommitDiffFiles) == 0 {
+		return
+	}
+	f := m.branchCommitDiffFiles[m.branchCommitDiffFileIdx]
+	for i := m.branchCommitDiffLineCursor + 1; i < len(f.Lines); i++ {
+		if f.Lines[i].Type == "hunk" {
+			m.branchCommitDiffLineCursor = i
+			return
+		}
+	}
+}
+
+func (m *Model) branchCommitDiffPrevHunk() {
+	if len(m.branchCommitDiffFiles) == 0 {
+		return
+	}
+	f := m.branchCommitDiffFiles[m.branchCommitDiffFileIdx]
+	for i := m.branchCommitDiffLineCursor - 1; i >= 0; i-- {
+		if f.Lines[i].Type == "hunk" {
+			m.branchCommitDiffLineCursor = i
+			return
+		}
+	}
+}
+
+func (m Model) branchCommitDiffHeight() int {
+	bodyH := m.diffPanelHeight()
+	if len(m.branchCommitDiffFiles) == 0 {
+		return bodyH - 4
+	}
+	startIdx := m.branchCommitDiffFileIdx - 1
+	if startIdx < 0 {
+		startIdx = 0
+	}
+	endIdx := startIdx + 3
+	if endIdx > len(m.branchCommitDiffFiles) {
+		endIdx = len(m.branchCommitDiffFiles)
+		startIdx = endIdx - 3
+		if startIdx < 0 {
+			startIdx = 0
+		}
+	}
+	tabsLen := endIdx - startIdx
+	dh := bodyH - (4 + tabsLen)
+	if dh < 1 {
+		dh = 1
+	}
+	return dh
+}
+
+func (m *Model) updateBranchCommitDiffScroll() {
+	if len(m.branchCommitDiffFiles) == 0 {
+		return
+	}
+	f := m.branchCommitDiffFiles[m.branchCommitDiffFileIdx]
+	totalLines := len(f.Lines)
+	diffHeight := m.branchCommitDiffHeight()
+
+	if m.branchCommitDiffLineCursor < m.branchCommitDiffScrollOffset {
+		m.branchCommitDiffScrollOffset = m.branchCommitDiffLineCursor
+	}
+
+	if m.branchCommitDiffLineCursor >= m.branchCommitDiffScrollOffset + diffHeight {
+		m.branchCommitDiffScrollOffset = m.branchCommitDiffLineCursor - diffHeight + 1
+	}
+
+	if m.branchCommitDiffScrollOffset >= totalLines {
+		m.branchCommitDiffScrollOffset = totalLines - 1
+	}
+	if m.branchCommitDiffScrollOffset < 0 {
+		m.branchCommitDiffScrollOffset = 0
+	}
+}
+
+// viewBranchCommitDiffPanel renders the changes panel for the selected commit.
+func (m Model) viewBranchCommitDiffPanel(w, h int) string {
+	var lines []string
+
+	if m.branchCommitDiffLoading {
+		lines = append(lines,
+			subtitleStyle.Render("  Changes"),
+			"",
+			dimStyle.Render("  Loading diffs..."),
+		)
+		return strings.Join(lines, "\n")
+	}
+
+	if len(m.branchCommitDiffFiles) == 0 {
+		lines = append(lines,
+			subtitleStyle.Render("  Changes"),
+			"",
+			dimStyle.Render("  No files changed or no diff found."),
+		)
+		return strings.Join(lines, "\n")
+	}
+
+	// File list header
+	fileCount := len(m.branchCommitDiffFiles)
+	headerLine := subtitleStyle.Render("  Changes ") +
+		dimStyle.Render(fmt.Sprintf("(%d file(s))  n/p=file, J/K=hunk", fileCount))
+	lines = append(lines, headerLine)
+
+	// File tabs (show nearby files)
+	var fileTabs []string
+	startIdx := m.branchCommitDiffFileIdx - 1
+	if startIdx < 0 {
+		startIdx = 0
+	}
+	endIdx := startIdx + 3
+	if endIdx > len(m.branchCommitDiffFiles) {
+		endIdx = len(m.branchCommitDiffFiles)
+		startIdx = endIdx - 3
+		if startIdx < 0 {
+			startIdx = 0
+		}
+	}
+
+	for i := startIdx; i < endIdx; i++ {
+		f := m.branchCommitDiffFiles[i]
+		name := f.NewPath
+		if len(name) > 35 {
+			name = "…" + name[len(name)-34:]
+		}
+		label := fmt.Sprintf("+%d -%d %s", f.Added, f.Deleted, name)
+		if i == m.branchCommitDiffFileIdx {
+			fileTabs = append(fileTabs, accentStyle.Render(" ▶ "+label))
+		} else {
+			fileTabs = append(fileTabs, dimStyle.Render("   "+label))
+		}
+	}
+	lines = append(lines, strings.Join(fileTabs, "\n"))
+	lines = append(lines, lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", w-2)))
+
+	tabsLen := endIdx - startIdx
+	diffHeight := h - (4 + tabsLen)
+	if diffHeight < 1 {
+		diffHeight = 1
+	}
+
+	// Current file diff lines
+	f := m.branchCommitDiffFiles[m.branchCommitDiffFileIdx]
+	renderedCount := 0
+
+	for i := m.branchCommitDiffScrollOffset; i < len(f.Lines) && renderedCount < diffHeight; i++ {
+		dl := f.Lines[i]
+		selected := i == m.branchCommitDiffLineCursor
+		content := dl.Content
+		// Clip to panel width (use display-width, not byte length)
+		avail := w - 5
+		if avail < 1 {
+			avail = 1
+		}
+		if lipgloss.Width(content) > avail {
+			content = ansi.Truncate(content, avail-1, "…")
+		}
+
+		var rendered string
+		switch dl.Type {
+		case "added":
+			st := lipgloss.NewStyle().Foreground(colorSuccess)
+			if selected {
+				st = st.Background(colorBgHover).Bold(true)
+			}
+			rendered = st.Render("▶ " + content)
+		case "removed":
+			st := lipgloss.NewStyle().Foreground(colorError)
+			if selected {
+				st = st.Background(colorBgHover).Bold(true)
+			}
+			rendered = st.Render("▶ " + content)
+		case "hunk":
+			st := lipgloss.NewStyle().Foreground(colorInfo).Italic(true)
+			if selected {
+				st = st.Background(colorBgHover).Bold(true)
+			}
+			rendered = st.Render("  " + content)
+		default:
+			st := lipgloss.NewStyle().Foreground(colorTextDim)
+			if selected {
+				st = st.Background(colorBgHover)
+			}
+			rendered = st.Render("  " + content)
+		}
+		lines = append(lines, rendered)
+		renderedCount++
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) viewBranchCommitsSplit(bodyH int) string {
+	leftW := m.width * 2 / 5
+	rightW := m.width - leftW - 1 // -1 for separator
+
+	if leftW < 20 {
+		leftW = 20
+	}
+
+	header := lipgloss.NewStyle().
+		Foreground(colorMuted).
+		PaddingLeft(2).
+		Render(fmt.Sprintf("Commits: %s", m.branchDetailName))
+	header += "\n" + lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", leftW-2))
+
+	listH := bodyH - 3
+	if listH < 1 {
+		listH = 1
+	}
+
+	maxVisible := listH
+	start := m.branchCommitCursor - maxVisible/2
+	if start < 0 {
+		start = 0
+	}
+	end := start + maxVisible
+	if end > len(m.branchCommits) {
+		end = len(m.branchCommits)
+		start = end - maxVisible
+		if start < 0 {
+			start = 0
+		}
+	}
+
+	var rows []string
+	for i := start; i < end; i++ {
+		c := m.branchCommits[i]
+		selected := i == m.branchCommitCursor
+
+		// In split view, format compactly
+		line := fmt.Sprintf("%-10s  %s",
+			c.ShortID,
+			truncate(c.Title, leftW-15),
+		)
+
+		if selected {
+			rows = append(rows, selectedStyle.Width(leftW-2).Render("▶ "+line))
+		} else {
+			rows = append(rows, normalItemStyle.Width(leftW-2).Render("  "+line))
+		}
+	}
+
+	leftContent := header + "\n" + strings.Join(rows, "\n")
+	left := lipgloss.NewStyle().Width(leftW).Height(bodyH).MaxHeight(bodyH).Render(leftContent)
+
+	// Separator
+	sepContent := strings.Repeat("│\n", bodyH)
+	if bodyH > 0 {
+		sepContent = sepContent[:len(sepContent)-1]
+	}
+	sep := lipgloss.NewStyle().Foreground(colorBorder).Render(sepContent)
+
+	// Right: diff panel
+	rightContent := m.viewBranchCommitDiffPanel(rightW, bodyH)
+	right := lipgloss.NewStyle().Width(rightW).Height(bodyH).MaxHeight(bodyH).Render(rightContent)
+
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, sep, right)
+}
+
