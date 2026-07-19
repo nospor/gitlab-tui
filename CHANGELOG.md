@@ -1,4 +1,50 @@
 
+## [0.6.5] - 2026-07-19
+
+### Features
+
+- *(tui)* Add Branches tab with delete, create MR, commits, and compare features ([6fa0a0b](https://github.com/nospor/gitlab-tui/commit/6fa0a0bfe49cca6c264de585f0156d3fc7d02588))
+
+            - Add a new Branches tab (hotkey 2) between Merge Requests and
+            Pipelines.
+            - Implement branch listing with windowed scrolling for large
+            repositories.
+            - Add branch deletion with a confirmation overlay dialog.
+            - Implement skip-source branch wizard for creating Merge Requests
+            directly from a branch.
+            - Add commits view for branches showing commit history (Short SHA,
+            Author, Date, Title).
+            - Implement side-by-side branch comparison view showing unique commits
+            and changed files, with file diff expansion.
+- *(tui)* Add interactive commit diff panel in branch view ([9b6b566](https://github.com/nospor/gitlab-tui/commit/9b6b56696caeb6c00a5f0d7a60e51b511d8791cd))
+
+            - Add Tab key support in branch commits view to open/close the diff
+            panel for the selected commit.
+             - Implement Gitlab API endpoint wrapper to fetch commit diffs with
+            paging support.
+            - Support scrolling diff lines (j/k), switching modified files (n/p),
+            and hunk jumping (J/K) when the panel is open.
+            - Add split layout view for branch commits and dynamic key hints in the
+            footer.
+- *(tui)* Align branch compare view behavior with branch commits view ([65dbe5f](https://github.com/nospor/gitlab-tui/commit/65dbe5ffcf32b77bcb8847bcbd30125dc9bcc59a))
+
+            - Replace the side-by-side commits/changed files panes in the compare
+            view with a single commits list.
+            - Allow pressing Tab on a commit in the compare view to load and open
+            its diff panel, matching the standard branch commits view.
+            - Enable full diff panel navigation (j/k to scroll lines, n/p for files,
+            J/K for hunks) in compare view.
+- *(tui)* Add capability to reopen closed merge requests ([d646818](https://github.com/nospor/gitlab-tui/commit/d646818e40c357850c6366a11a35e52086df46ed))
+- *(tui)* Auto-refresh lists after detail actions & preserve cursor position ([13e124b](https://github.com/nospor/gitlab-tui/commit/13e124b1de5d69264bd00ad2d34b03361f8d2507))
+
+### Bug Fixes
+
+- *(tui)* Allow space character in merge request title input ([2e00cb9](https://github.com/nospor/gitlab-tui/commit/2e00cb93ea396326f21b1d3b14b4ec96d2ebcf9c))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.6.4 [skip ci] ([5d7eb90](https://github.com/nospor/gitlab-tui/commit/5d7eb90225edce71073a42ec4e9edff4d3046846))
+
 ## [0.6.4] - 2026-07-17
 
 ### Other
