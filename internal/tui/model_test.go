@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"gitlab-tui/internal/config"
 	"gitlab-tui/internal/gitlab"
 )
@@ -375,5 +376,185 @@ func TestCloseAndReopenIssueKeyFromList(t *testing.T) {
 	}
 	if newModelO.confirm == nil || newModelO.confirm.label != "Reopen Issue #88?" {
 		t.Errorf("expected confirmation prompt for Reopen Issue #88, got %v", newModelO.confirm)
+	}
+}
+
+func TestCreateIssueKey(t *testing.T) {
+	InitTheme("catppuccin")
+
+	m := New(&config.Config{
+		Servers: []config.Server{
+			{Name: "GitLab", URL: "https://gitlab.com"},
+		},
+	}, 0, nil, &gitlab.ProjectInfo{ID: 1}, "", 0, 0, 0)
+	m.tab = tabIssues
+	m.state = stateMain
+	m.width = 100
+	m.height = 30
+
+	footer := m.viewFooter()
+	if !strings.Contains(footer, "c") || !strings.Contains(footer, "create issue") {
+		t.Errorf("expected list footer to contain 'c create issue', got: %s", footer)
+	}
+
+	// Press 'c' to trigger create issue dialog
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}}
+	res, _ := m.Update(msg)
+
+	newModel := res.(Model)
+	if newModel.state != stateCreateIssue {
+		t.Errorf("expected state to be stateCreateIssue, got %v", newModel.state)
+	}
+
+	// Render view and check box content
+	plainView := ansi.Strip(newModel.View())
+	if !strings.Contains(plainView, "Create Issue") || !strings.Contains(plainView, "Title:") || !strings.Contains(plainView, "Type:") {
+		t.Errorf("expected View() to contain Create Issue form elements, got: %s", plainView)
+	}
+}
+
+func TestEditIssueKeyFromList(t *testing.T) {
+	InitTheme("catppuccin")
+
+	m := New(&config.Config{
+		Servers: []config.Server{
+			{Name: "GitLab", URL: "https://gitlab.com"},
+		},
+	}, 0, nil, &gitlab.ProjectInfo{ID: 1}, "", 0, 0, 0)
+	m.tab = tabIssues
+	m.state = stateMain
+	m.issues = []*gitlab.IssueInfo{
+		{
+			IID:         101,
+			Title:       "Existing Issue Title",
+			Description: "Existing description body",
+			IssueType:   "incident",
+			State:       "opened",
+		},
+	}
+	m.issueCursor = 0
+	m.width = 80
+	m.height = 24
+
+	footer := m.viewFooter()
+	if !strings.Contains(footer, "e") || !strings.Contains(footer, "edit issue") {
+		t.Errorf("expected list footer to contain 'e edit issue', got: %s", footer)
+	}
+
+	// Press 'e' to trigger edit issue dialog
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}}
+	res, _ := m.Update(msg)
+
+	newModel := res.(Model)
+	if newModel.state != stateEditIssue {
+		t.Errorf("expected state to be stateEditIssue, got %v", newModel.state)
+	}
+	if newModel.issueEditIID != 101 {
+		t.Errorf("expected issueEditIID to be 101, got %d", newModel.issueEditIID)
+	}
+	if newModel.issueFormTitle.Value() != "Existing Issue Title" {
+		t.Errorf("expected pre-filled title 'Existing Issue Title', got '%s'", newModel.issueFormTitle.Value())
+	}
+	if newModel.issueFormDescription.Value() != "Existing description body" {
+		t.Errorf("expected pre-filled description 'Existing description body', got '%s'", newModel.issueFormDescription.Value())
+	}
+	if newModel.issueFormTypeIdx != 1 { // incident is index 1
+		t.Errorf("expected issueFormTypeIdx to be 1 for incident, got %d", newModel.issueFormTypeIdx)
+	}
+
+	// Render view and check box content
+	viewStr := newModel.View()
+	if !strings.Contains(viewStr, "Edit Issue #101") || !strings.Contains(viewStr, "incident") {
+		t.Errorf("expected View() to contain Edit Issue #101 with type incident, got: %s", viewStr)
+	}
+}
+
+func TestEditIssueKeyFromDetail(t *testing.T) {
+	InitTheme("catppuccin")
+
+	m := New(&config.Config{
+		Servers: []config.Server{
+			{Name: "GitLab", URL: "https://gitlab.com"},
+		},
+	}, 0, nil, &gitlab.ProjectInfo{ID: 1}, "", 0, 0, 0)
+	m.tab = tabIssues
+	m.state = stateDetail
+	m.commentCursor = -1 // no comment selected
+	m.issueDetail = &gitlab.IssueInfo{
+		IID:         202,
+		Title:       "Detail Issue",
+		Description: "Detail desc",
+		IssueType:   "task",
+		State:       "opened",
+	}
+	m.width = 80
+	m.height = 24
+
+	footer := m.viewDetailFooter()
+	if !strings.Contains(footer, "e") || !strings.Contains(footer, "edit issue") {
+		t.Errorf("expected detail footer to contain 'e edit issue', got: %s", footer)
+	}
+
+	// Press 'e' on detail view without selected comment
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}}
+	res, _ := m.Update(msg)
+
+	newModel := res.(Model)
+	if newModel.state != stateEditIssue {
+		t.Errorf("expected state to be stateEditIssue, got %v", newModel.state)
+	}
+	if newModel.issueEditIID != 202 {
+		t.Errorf("expected issueEditIID to be 202, got %d", newModel.issueEditIID)
+	}
+	if newModel.issueFormTypeIdx != 0 { // task is index 0 in []string{"task", "issue"}
+		t.Errorf("expected issueFormTypeIdx to be 0 for task, got %d", newModel.issueFormTypeIdx)
+	}
+}
+
+func TestCreateEditIssueFormKeys(t *testing.T) {
+	InitTheme("catppuccin")
+
+	m := New(&config.Config{
+		Servers: []config.Server{
+			{Name: "GitLab", URL: "https://gitlab.com"},
+		},
+	}, 0, nil, &gitlab.ProjectInfo{ID: 1}, "", 0, 0, 0)
+	m.tab = tabIssues
+	m.state = stateMain
+	m.width = 80
+	m.height = 24
+
+	// Start create issue
+	m, _ = m.startCreateIssue()
+
+	// Type 'A' into title
+	msgA := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}}
+	res, _ := m.Update(msgA)
+	m = res.(Model)
+	if m.issueFormTitle.Value() != "A" {
+		t.Errorf("expected title to be 'A', got '%s'", m.issueFormTitle.Value())
+	}
+
+	// Press Tab to move to Type field
+	msgTab := tea.KeyMsg{Type: tea.KeyTab}
+	res, _ = m.Update(msgTab)
+	m = res.(Model)
+	if m.issueFormField != issueFieldType {
+		t.Errorf("expected field to be issueFieldType (1), got %d", m.issueFormField)
+	}
+
+	// Cycle type with right arrow
+	msgRight := tea.KeyMsg{Type: tea.KeyRight}
+	res, _ = m.Update(msgRight)
+	m = res.(Model)
+	if m.issueFormTypeIdx != 1 {
+		t.Errorf("expected type index to be 1 (incident), got %d", m.issueFormTypeIdx)
+	}
+
+	// Press Tab again to move to Description field
+	res, _ = m.Update(msgTab)
+	m = res.(Model)
+	if m.issueFormField != issueFieldDescription {
+		t.Errorf("expected field to be issueFieldDescription (2), got %d", m.issueFormField)
 	}
 }

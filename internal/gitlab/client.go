@@ -944,6 +944,7 @@ const (
 type IssueInfo struct {
 	IID            int
 	Title          string
+	IssueType      string
 	State          string
 	Author         string
 	WebURL         string
@@ -987,6 +988,11 @@ func (c *Client) ListIssues(projectID int, state IssueState, page int) ([]*Issue
 			Downvotes:      i64(iss.Downvotes),
 			UserNotesCount: i64(iss.UserNotesCount),
 		}
+		if iss.IssueType != nil {
+			info.IssueType = *iss.IssueType
+		} else {
+			info.IssueType = "issue"
+		}
 		if iss.Author != nil {
 			info.Author = iss.Author.Username
 		}
@@ -1023,6 +1029,11 @@ func (c *Client) GetIssue(projectID, issueIID int) (*IssueInfo, error) {
 		Downvotes:      i64(iss.Downvotes),
 		UserNotesCount: i64(iss.UserNotesCount),
 	}
+	if iss.IssueType != nil {
+		info.IssueType = *iss.IssueType
+	} else {
+		info.IssueType = "issue"
+	}
 	if iss.Author != nil {
 		info.Author = iss.Author.Username
 	}
@@ -1037,6 +1048,100 @@ func (c *Client) GetIssue(projectID, issueIID int) (*IssueInfo, error) {
 	}
 	for _, a := range iss.Assignees {
 		info.Assignees = append(info.Assignees, a.Username)
+	}
+	return info, nil
+}
+
+// CreateIssueOptions holds optional parameters for creating an issue.
+type CreateIssueOptions struct {
+	Description string
+	IssueType   string
+}
+
+// CreateIssue creates a new issue and returns basic info about it.
+func (c *Client) CreateIssue(projectID int, title string, opts CreateIssueOptions) (*IssueInfo, error) {
+	o := &gl.CreateIssueOptions{
+		Title: &title,
+	}
+	if opts.Description != "" {
+		o.Description = &opts.Description
+	}
+	if opts.IssueType != "" {
+		o.IssueType = &opts.IssueType
+	}
+
+	iss, _, err := c.raw.Issues.CreateIssue(projectID, o)
+	if err != nil {
+		return nil, fmt.Errorf("creating issue: %w", err)
+	}
+
+	info := &IssueInfo{
+		IID:         i64(iss.IID),
+		Title:       iss.Title,
+		State:       iss.State,
+		WebURL:      iss.WebURL,
+		Description: iss.Description,
+	}
+	if iss.IssueType != nil {
+		info.IssueType = *iss.IssueType
+	} else {
+		info.IssueType = "issue"
+	}
+	if iss.Author != nil {
+		info.Author = iss.Author.Username
+	}
+	if iss.CreatedAt != nil {
+		info.CreatedAt = iss.CreatedAt.Format("2006-01-02 15:04")
+	}
+	if iss.UpdatedAt != nil {
+		info.UpdatedAt = iss.UpdatedAt.Format("2006-01-02 15:04")
+	}
+	return info, nil
+}
+
+// UpdateIssueOptions holds optional parameters for updating an issue.
+type UpdateIssueOptions struct {
+	Title       string
+	Description string
+	IssueType   string
+}
+
+// UpdateIssue updates an existing issue and returns basic info about it.
+func (c *Client) UpdateIssue(projectID, issueIID int, opts UpdateIssueOptions) (*IssueInfo, error) {
+	o := &gl.UpdateIssueOptions{}
+	if opts.Title != "" {
+		o.Title = &opts.Title
+	}
+	o.Description = &opts.Description
+	if opts.IssueType != "" {
+		o.IssueType = &opts.IssueType
+	}
+
+	iss, _, err := c.raw.Issues.UpdateIssue(projectID, int64(issueIID), o)
+	if err != nil {
+		return nil, fmt.Errorf("updating issue: %w", err)
+	}
+
+	info := &IssueInfo{
+		IID:         i64(iss.IID),
+		Title:       iss.Title,
+		State:       iss.State,
+		WebURL:      iss.WebURL,
+		Description: iss.Description,
+	}
+	if iss.IssueType != nil {
+		info.IssueType = *iss.IssueType
+	} else {
+		info.IssueType = "issue"
+	}
+	if iss.Author != nil {
+		info.Author = iss.Author.Username
+	}
+	if iss.CreatedAt != nil {
+		info.CreatedAt = iss.CreatedAt.Format("2006-01-02 15:04")
+	}
+	if iss.UpdatedAt != nil {
+		info.UpdatedAt = iss.UpdatedAt.Format("2006-01-02 15:04")
 	}
 	return info, nil
 }
