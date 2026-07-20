@@ -1,4 +1,25 @@
 
+## [0.6.6] - 2026-07-20
+
+### Features
+
+- *(issue)* Add issue comments, voting, and comment selection/editing/deletion ([9b3d080](https://github.com/nospor/gitlab-tui/commit/9b3d080e1b2e0865a37f89a948ab78b350b28369))
+
+            - Add comment discussion list, general comment creation, and
+            upvote/downvote support to Issue detail view.
+            - Add comment selection navigation (`n`/`p` or `J`/`K`) for both MR and
+            Issue detail views with visual selection highlighting.
+            - Add comment editing (`e`) and comment deletion (`d`) for MR and Issue
+            comments.
+- *(tui)* Add state filter toggle for issues list ([7a4c031](https://github.com/nospor/gitlab-tui/commit/7a4c031f8b951b07b3a215d134a433096c427fe2))
+- *(issue)* Add close (`x`) and reopen (`O`) shortcuts and refresh list state ([0346b67](https://github.com/nospor/gitlab-tui/commit/0346b67950cc94914a330bc6b1559ceb761dd7c0))
+- *(issues)* Add issue creation and editing with dynamic type validation ([2f91463](https://github.com/nospor/gitlab-tui/commit/2f914632e8fbfff69cd7d87ed1d21c61a8d1f573))
+- *(issue)* Add create branch for issue ([4ed3ee2](https://github.com/nospor/gitlab-tui/commit/4ed3ee2a049355579dcc0f6ee254de314ec1c528))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.6.5 [skip ci] ([5965e15](https://github.com/nospor/gitlab-tui/commit/5965e15d7ca243c38acf6114bf40736afece1359))
+
 ## [0.6.5] - 2026-07-19
 
 ### Features
