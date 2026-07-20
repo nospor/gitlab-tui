@@ -702,3 +702,21 @@ func TestCreateBranchForIssueFormNavigation(t *testing.T) {
 		t.Errorf("expected field to switch back to name (0), got %d", m.createIssueBranchField)
 	}
 }
+
+func TestFormatSystemNoteStyled(t *testing.T) {
+	input := `changed title from \*\*new tst2\*\* to \*\*new tst2{+ 222+}\*\*`
+	got := formatSystemNoteStyled(input)
+
+	// Verify that ** asterisks are stripped from output
+	if strings.Contains(got, "**") {
+		t.Errorf("expected asterisks ** to be stripped, got: %q", got)
+	}
+	// Verify that {+ +} brackets are stripped from output
+	if strings.Contains(got, "{+") {
+		t.Errorf("expected diff brackets {+ +} to be stripped, got: %q", got)
+	}
+	// Verify that text contents and diff addition are present
+	if !strings.Contains(got, "new tst2") || !strings.Contains(got, "+222") {
+		t.Errorf("expected text contents 'new tst2' and '+222' in output, got: %q", got)
+	}
+}

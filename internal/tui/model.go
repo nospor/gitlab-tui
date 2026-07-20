@@ -4634,7 +4634,7 @@ func (m Model) viewMRDetailLinesForWidth(w int) ([]string, []string) {
 			for noteIdx, note := range d.Notes {
 				var noteContent string
 				if note.System {
-					noteContent = dimStyle.Italic(true).Render(fmt.Sprintf("• %s (%s)", note.Body, note.CreatedAt))
+					noteContent = fmt.Sprintf("• %s %s", formatSystemNoteStyled(note.Body), dimStyle.Render("("+note.CreatedAt+")"))
 				} else {
 					isSelected := (selectableIdx == m.commentCursor)
 					selectableIdx++
@@ -5067,7 +5067,7 @@ func (m Model) viewIssueDetailLinesForWidth(w int) ([]string, []string) {
 			for noteIdx, note := range d.Notes {
 				var noteContent string
 				if note.System {
-					noteContent = dimStyle.Italic(true).Render(fmt.Sprintf("• %s (%s)", note.Body, note.CreatedAt))
+					noteContent = fmt.Sprintf("• %s %s", formatSystemNoteStyled(note.Body), dimStyle.Render("("+note.CreatedAt+")"))
 				} else {
 					isSelected := (selectableIdx == m.commentCursor)
 					selectableIdx++

@@ -28,7 +28,12 @@ func TestConvertHTMLToMarkdown(t *testing.T) {
 		{
 			name:  "List with link and attributes",
 			input: `<ul class="commits-list"><li class="commit"><a href="/proj/commit/1234">1234</a> - feat: done</li></ul>`,
-			want:  "- [1234](/proj/commit/1234) \\- feat: done",
+			want:  "- [1234](/proj/commit/1234) - feat: done",
+		},
+		{
+			name:  "Title change with markdown and wdiff tags",
+			input: "changed title from **new tst2** to **new tst2{+ 222+}**",
+			want:  "changed title from **new tst2** to **new tst2{+ 222+}**",
 		},
 		{
 			name:  "Formatted text tags",
@@ -62,6 +67,39 @@ func TestConvertHTMLToMarkdown(t *testing.T) {
 			got := ConvertHTMLToMarkdown(tt.input)
 			if got != tt.want {
 				t.Errorf("ConvertHTMLToMarkdown() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFormatSystemNote(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "Title change with escaped asterisks and wdiff insertion",
+			input: `changed title from \*\*new tst2\*\* to \*\*new tst2{+ 222+}\*\*`,
+			want:  `changed title from new tst2 to new tst2 +222`,
+		},
+		{
+			name:  "Title change with raw asterisks and wdiff insertion",
+			input: `changed title from **new tst2** to **new tst2{+ 222+}**`,
+			want:  `changed title from new tst2 to new tst2 +222`,
+		},
+		{
+			name:  "Title change with deletion",
+			input: `changed title from **old title[- 111-]** to **new title**`,
+			want:  `changed title from old title -111 to new title`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := FormatSystemNote(tt.input)
+			if got != tt.want {
+				t.Errorf("FormatSystemNote() = %q, want %q", got, tt.want)
 			}
 		})
 	}

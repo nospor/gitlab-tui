@@ -1,9 +1,11 @@
 package tui
 
 import (
+	"regexp"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"gitlab-tui/internal/gitlab"
 )
 
 // Color palette — mutable variables for themes
@@ -221,4 +223,57 @@ func keyHint(key, desc string) string {
 		Foreground(colorMuted).
 		Render(" " + desc)
 	return k + d
+}
+
+var reSystemTokens = regexp.MustCompile(`\{\+\s*(.*?)\s*\+\}|\[\-\s*(.*?)\s*\-\]|\*\*(.*?)\*\*|__(.*?)__`)
+
+// formatSystemNoteStyled formats system notes with TUI styles:
+// - **bold** and __bold__ are rendered with bold text styling (without literal asterisks)
+// - {+added+} diff insertions are rendered in green (+added)
+// - [-deleted-] diff deletions are rendered in red (-deleted)
+// - surrounding text is rendered in dim italic styling
+func formatSystemNoteStyled(body string) string {
+	if body == "" {
+		return ""
+	}
+	s := gitlab.UnescapeMarkdown(body)
+
+	var result strings.Builder
+	lastIdx := 0
+
+	matches := reSystemTokens.FindAllStringSubmatchIndex(s, -1)
+	for _, m := range matches {
+		if m[0] > lastIdx {
+			result.WriteString(dimStyle.Italic(true).Render(s[lastIdx:m[0]]))
+		}
+
+		if m[2] != -1 { // diff add {+ ... +}
+			content := strings.TrimSpace(s[m[2]:m[3]])
+			result.WriteString(successStyle.Render(" +" + content))
+		} else if m[4] != -1 { // diff del [- ... -]
+			content := strings.TrimSpace(s[m[4]:m[5]])
+			result.WriteString(errorStyle.Render(" -" + content))
+		} else if m[6] != -1 { // bold **...**
+			content := s[m[6]:m[7]]
+			if strings.Contains(content, "{+") || strings.Contains(content, "[-") {
+				result.WriteString(formatSystemNoteStyled(content))
+			} else {
+				result.WriteString(boldStyle.Render(content))
+			}
+		} else if m[8] != -1 { // bold __...__
+			content := s[m[8]:m[9]]
+			if strings.Contains(content, "{+") || strings.Contains(content, "[-") {
+				result.WriteString(formatSystemNoteStyled(content))
+			} else {
+				result.WriteString(boldStyle.Render(content))
+			}
+		}
+		lastIdx = m[1]
+	}
+
+	if lastIdx < len(s) {
+		result.WriteString(dimStyle.Italic(true).Render(s[lastIdx:]))
+	}
+
+	return result.String()
 }
