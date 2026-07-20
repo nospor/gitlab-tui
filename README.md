@@ -9,7 +9,7 @@ Built with [BubbleTea](https://github.com/charmbracelet/bubbletea) and the offic
 - 🔀 **Merge Requests** — list, filter by state (open/merged/closed), view details, approve, merge, close, edit existing MRs, and **create new MRs** via an interactive wizard
 - 🌿 **Branches** — list branches, delete branch (with confirmation), create MR directly from a branch, view commits history, and compare branches (showing commit differences and changed files diff)
 - 🚀 **Pipelines** — list, view details (with dual-pane layout showing jobs and statuses), automatic background refresh (every 5s) for active pipelines, retry/cancel pipelines, restart individual jobs, scroll/search job trace logs, and open traces directly in your external editor
-- 🐛 **Issues** — list, filter by state (open/closed/all), view details with discussion threads & comments, create new issues (`c`), edit existing issues (`e`), close (`x`), reopen (`O`), post new comments, vote up/down, select/edit/delete comments
+- 🐛 **Issues** — list, filter by state (open/closed/all), view details with discussion threads & comments, create new issues (`c`), edit existing issues (`e`), create branch for issue (`b`), close (`x`), reopen (`O`), post new comments, vote up/down, select/edit/delete comments
 - 📁 **Projects** — browse and switch projects on the current server
 - 🔌 **Multiple servers** — configure several GitLab instances, switch between them
 - 🧠 **Auto-detection** — detects server and project from the current directory's `git remote`
@@ -131,6 +131,7 @@ Both SSH and HTTPS remotes are supported:
 | `s`               | Cycle MR or Issue state filter                              |
 | `c`               | Create new MR or Issue (MRs, Branches, and Issues tabs)     |
 | `C`               | Compare branch with another (Branches tab only)             |
+| `b`               | Create branch for issue (Issues tab only)                   |
 | `d`               | Delete branch (Branches tab only)                           |
 | `e`               | Edit selected MR or Issue (MRs and Issues tabs)             |
 | `x`               | Close selected MR or Issue                                  |
@@ -236,6 +237,24 @@ Press `c` on the Issues list tab to open the Create Issue popup, or press `e` on
 
 > **Note:** When editing an issue, the type selector dynamically hides options disallowed by GitLab's API (such as converting existing issues/incidents to `task`), preventing API errors.
 
+### Create Branch for Issue popup
+
+Press `b` on the Issues list tab (for the highlighted issue) or on the Issue detail page to open the Create Branch for Issue popup.
+
+| Field       | Notes                                                                              |
+| ----------- | ---------------------------------------------------------------------------------- |
+| Branch Name | Name of new branch. Pre-filled with `<iid>-<title-slug>` (e.g. `42-fix-login-bug`) |
+| Source Ref  | Source branch, tag, or commit SHA (pre-filled with default project branch)         |
+
+**Form navigation:**
+
+| Key                | Action                      |
+| ------------------ | --------------------------- |
+| `Tab`              | Next field                  |
+| `Shift+Tab`        | Previous field              |
+| `Enter` / `Ctrl+S` | Submit and create branch    |
+| `Esc`              | Cancel                      |
+
 ### Pipeline detail
 
 | Key       | Action                                             |
@@ -263,6 +282,7 @@ Press `c` on the Issues list tab to open the Create Issue popup, or press `e` on
 | `C` / `c` | Post new comment                                                   |
 | `r`       | Reply to selected comment thread                                   |
 | `e`       | Edit selected comment (or edit Issue if no comment selected)       |
+| `b`       | Create branch for issue                                            |
 | `d`       | Delete selected comment                                            |
 | `x`       | Close Issue                                                        |
 | `O`       | Reopen Issue (closed issues)                                       |

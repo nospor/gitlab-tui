@@ -558,3 +558,147 @@ func TestCreateEditIssueFormKeys(t *testing.T) {
 		t.Errorf("expected field to be issueFieldDescription (2), got %d", m.issueFormField)
 	}
 }
+
+func TestCreateBranchForIssueKeyFromList(t *testing.T) {
+	InitTheme("catppuccin")
+
+	m := New(&config.Config{
+		Servers: []config.Server{
+			{Name: "GitLab", URL: "https://gitlab.com"},
+		},
+	}, 0, nil, &gitlab.ProjectInfo{ID: 1, DefaultBranch: "main"}, "", 0, 0, 0)
+	m.tab = tabIssues
+	m.state = stateMain
+	m.issues = []*gitlab.IssueInfo{
+		{
+			IID:   88,
+			Title: "Fix Login Bug & Retry!",
+			State: "opened",
+		},
+	}
+	m.issueCursor = 0
+	m.width = 80
+	m.height = 24
+
+	footer := m.viewFooter()
+	if !strings.Contains(footer, "b") || !strings.Contains(footer, "create branch") {
+		t.Errorf("expected list footer to contain 'b create branch', got: %s", footer)
+	}
+
+	// Press 'b' to trigger create branch for issue dialog
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}}
+	res, _ := m.Update(msg)
+
+	newModel := res.(Model)
+	if newModel.state != stateCreateIssueBranch {
+		t.Errorf("expected state to be stateCreateIssueBranch, got %v", newModel.state)
+	}
+	if newModel.createIssueBranchIssue == nil || newModel.createIssueBranchIssue.IID != 88 {
+		t.Errorf("expected target issue IID to be 88")
+	}
+	expectedBranchName := "88-fix-login-bug-retry"
+	if newModel.createIssueBranchName.Value() != expectedBranchName {
+		t.Errorf("expected suggested branch name '%s', got '%s'", expectedBranchName, newModel.createIssueBranchName.Value())
+	}
+	if newModel.createIssueBranchRef.Value() != "main" {
+		t.Errorf("expected default ref 'main', got '%s'", newModel.createIssueBranchRef.Value())
+	}
+
+	// Render view and check box content
+	plainView := ansi.Strip(newModel.View())
+	if !strings.Contains(plainView, "Create Branch for Issue #88") || !strings.Contains(plainView, "Branch Name:") || !strings.Contains(plainView, "Source Ref") {
+		t.Errorf("expected View() to contain Create Branch for Issue form elements, got: %s", plainView)
+	}
+}
+
+func TestCreateBranchForIssueKeyFromDetail(t *testing.T) {
+	InitTheme("catppuccin")
+
+	m := New(&config.Config{
+		Servers: []config.Server{
+			{Name: "GitLab", URL: "https://gitlab.com"},
+		},
+	}, 0, nil, &gitlab.ProjectInfo{ID: 1, DefaultBranch: "master"}, "", 0, 0, 0)
+	m.tab = tabIssues
+	m.state = stateDetail
+	m.commentCursor = -1 // no comment selected
+	m.issueDetail = &gitlab.IssueInfo{
+		IID:   42,
+		Title: "Add Issue Branch Feature",
+		State: "opened",
+	}
+	m.width = 80
+	m.height = 24
+
+	footer := m.viewDetailFooter()
+	if !strings.Contains(footer, "b") || !strings.Contains(footer, "create branch") {
+		t.Errorf("expected detail footer to contain 'b create branch', got: %s", footer)
+	}
+
+	// Press 'b' on detail view
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}}
+	res, _ := m.Update(msg)
+
+	newModel := res.(Model)
+	if newModel.state != stateCreateIssueBranch {
+		t.Errorf("expected state to be stateCreateIssueBranch, got %v", newModel.state)
+	}
+	if newModel.createIssueBranchIssue == nil || newModel.createIssueBranchIssue.IID != 42 {
+		t.Errorf("expected target issue IID to be 42")
+	}
+	expectedBranchName := "42-add-issue-branch-feature"
+	if newModel.createIssueBranchName.Value() != expectedBranchName {
+		t.Errorf("expected suggested branch name '%s', got '%s'", expectedBranchName, newModel.createIssueBranchName.Value())
+	}
+	if newModel.createIssueBranchRef.Value() != "master" {
+		t.Errorf("expected default ref 'master', got '%s'", newModel.createIssueBranchRef.Value())
+	}
+
+	// Test Esc key cancel
+	msgEsc := tea.KeyMsg{Type: tea.KeyEsc}
+	resEsc, _ := newModel.Update(msgEsc)
+	canceledModel := resEsc.(Model)
+	if canceledModel.state != stateDetail {
+		t.Errorf("expected state to revert to stateDetail after Esc, got %v", canceledModel.state)
+	}
+}
+
+func TestCreateBranchForIssueFormNavigation(t *testing.T) {
+	InitTheme("catppuccin")
+
+	m := New(&config.Config{
+		Servers: []config.Server{
+			{Name: "GitLab", URL: "https://gitlab.com"},
+		},
+	}, 0, nil, &gitlab.ProjectInfo{ID: 1, DefaultBranch: "main"}, "", 0, 0, 0)
+	m.tab = tabIssues
+	m.state = stateMain
+	m.issues = []*gitlab.IssueInfo{
+		{
+			IID:   1,
+			Title: "Test Issue",
+			State: "opened",
+		},
+	}
+	m.issueCursor = 0
+
+	m, _ = m.startCreateBranchForIssue()
+	if m.createIssueBranchField != createIssueBranchFieldName {
+		t.Errorf("expected initial field to be name (0), got %d", m.createIssueBranchField)
+	}
+
+	// Press Tab to switch to Ref field
+	msgTab := tea.KeyMsg{Type: tea.KeyTab}
+	res, _ := m.Update(msgTab)
+	m = res.(Model)
+	if m.createIssueBranchField != createIssueBranchFieldRef {
+		t.Errorf("expected field to switch to ref (1), got %d", m.createIssueBranchField)
+	}
+
+	// Press Tab to switch back to Name field
+	res, _ = m.Update(msgTab)
+	m = res.(Model)
+	if m.createIssueBranchField != createIssueBranchFieldName {
+		t.Errorf("expected field to switch back to name (0), got %d", m.createIssueBranchField)
+	}
+}

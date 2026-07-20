@@ -77,6 +77,7 @@ const (
 	stateEditIssue
 	statePipelineSelect
 	stateCompareBranchSelect
+	stateCreateIssueBranch
 )
 
 // ─── Messages ─────────────────────────────────────────────────────────────────
@@ -319,6 +320,12 @@ type Model struct {
 	issueFormField       int
 	issueEditIID         int
 	issueEditOrigType    string
+
+	// Create Branch for Issue form
+	createIssueBranchIssue *gitlab.IssueInfo
+	createIssueBranchName  textinput.Model
+	createIssueBranchRef   textinput.Model
+	createIssueBranchField int
 }
 
 const (
@@ -326,6 +333,10 @@ const (
 	issueFieldType        = 1
 	issueFieldDescription = 2
 	issueFieldCount       = 3
+
+	createIssueBranchFieldName  = 0
+	createIssueBranchFieldRef   = 1
+	createIssueBranchFieldCount = 2
 )
 
 func (m Model) currentFormIssueTypes() []string {
@@ -428,6 +439,17 @@ func New(cfg *config.Config, serverIdx int, client *gitlab.Client, project *gitl
 	idi.BlurredStyle.CursorLine = idi.BlurredStyle.CursorLine.Background(colorBgPanel)
 	idi.BlurredStyle.EndOfBuffer = idi.BlurredStyle.EndOfBuffer.Background(colorBgPanel)
 
+	// Create Branch for Issue text inputs
+	bnti := textinput.New()
+	bnti.Placeholder = "Enter branch name..."
+	bnti.CharLimit = 255
+	bnti.Width = 58
+
+	bnref := textinput.New()
+	bnref.Placeholder = "Enter source ref/branch (e.g. main)..."
+	bnref.CharLimit = 255
+	bnref.Width = 58
+
 	m := Model{
 		cfg:                  cfg,
 		serverIdx:            serverIdx,
@@ -453,6 +475,8 @@ func New(cfg *config.Config, serverIdx int, client *gitlab.Client, project *gitl
 		createMRDescription:   mrdi,
 		issueFormTitle:       iti,
 		issueFormDescription: idi,
+		createIssueBranchName: bnti,
+		createIssueBranchRef:  bnref,
 	}
 	return m
 }
@@ -871,6 +895,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.state == stateCreateIssue || m.state == stateEditIssue {
 			return m.handleCreateEditIssueKey(msg)
 		}
+		if m.state == stateCreateIssueBranch {
+			return m.handleCreateIssueBranchKey(msg)
+		}
 		if m.state == stateMain && m.tab == tabProjects && m.projectSearch.Focused() {
 			key := msg.String()
 			switch key {
@@ -1052,6 +1079,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handlePipelineSelectKey(key)
 	case stateCompareBranchSelect:
 		return m.handleCompareBranchSelectKey(key)
+	case stateCreateIssueBranch:
+		return m.handleCreateIssueBranchKey(msg)
 
 	case stateServerSelect:
 		return m.handleServerSelectKey(key)
@@ -1160,6 +1189,10 @@ func (m Model) handleMainKey(key string) (tea.Model, tea.Cmd) {
 		if m.tab == tabBranches && m.project != nil && m.branchCursor < len(m.branches) {
 			branch := m.branches[m.branchCursor]
 			return m.promptConfirm("Delete Branch", fmt.Sprintf("Are you sure you want to delete branch '%s'?", branch), m.cmdDeleteBranch(branch))
+		}
+	case "b":
+		if m.tab == tabIssues && m.project != nil && m.issueCursor < len(m.issues) {
+			return m.startCreateBranchForIssue()
 		}
 	case "e":
 		if m.project != nil {
@@ -1626,6 +1659,10 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 			if m.issueDetail != nil && m.issueDetail.State == "closed" {
 				return m.promptConfirm("Reopen Issue", fmt.Sprintf("Reopen Issue #%d?", m.issueDetail.IID),
 					m.cmdReopenIssue(m.issueDetail.IID))
+			}
+		case "b":
+			if m.issueDetail != nil && m.project != nil {
+				return m.startCreateBranchForIssue()
 			}
 		}
 	case tabBranches:
@@ -2428,6 +2465,133 @@ func (m Model) submitEditIssue() (Model, tea.Cmd) {
 		strings.TrimSpace(m.issueFormDescription.Value()),
 		issueTypeArg,
 	)
+}
+
+// ─── Create Branch for Issue ──────────────────────────────────────────────────
+
+func slugifyIssueBranch(iid int, title string) string {
+	var sb strings.Builder
+	sb.WriteString(strconv.Itoa(iid))
+	sb.WriteString("-")
+
+	lowered := strings.ToLower(title)
+	lastHyphen := true
+	for _, r := range lowered {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			sb.WriteRune(r)
+			lastHyphen = false
+		} else if !lastHyphen {
+			sb.WriteRune('-')
+			lastHyphen = true
+		}
+	}
+	res := strings.TrimSuffix(sb.String(), "-")
+	return res
+}
+
+func (m Model) startCreateBranchForIssue() (Model, tea.Cmd) {
+	var targetIssue *gitlab.IssueInfo
+	if m.state == stateDetail && m.tab == tabIssues {
+		targetIssue = m.issueDetail
+	} else if m.state == stateMain && m.tab == tabIssues {
+		if m.issueCursor < len(m.issues) {
+			targetIssue = m.issues[m.issueCursor]
+		}
+	}
+
+	if targetIssue == nil || m.project == nil {
+		return m, nil
+	}
+
+	suggestedName := slugifyIssueBranch(targetIssue.IID, targetIssue.Title)
+	defaultRef := m.project.DefaultBranch
+	if defaultRef == "" {
+		defaultRef = "main"
+	}
+
+	m.createIssueBranchIssue = targetIssue
+	m.createIssueBranchName.SetValue(suggestedName)
+	m.createIssueBranchRef.SetValue(defaultRef)
+	m.createIssueBranchField = createIssueBranchFieldName
+
+	m.createIssueBranchRef.Blur()
+	titleCmd := m.createIssueBranchName.Focus()
+	m.createIssueBranchName.CursorEnd()
+
+	m.prevState = m.state
+	m.state = stateCreateIssueBranch
+
+	return m, titleCmd
+}
+
+func (m Model) handleCreateIssueBranchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	switch key {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.createIssueBranchName.Blur()
+		m.createIssueBranchRef.Blur()
+		m.state = m.prevState
+		return m, nil
+	case "tab":
+		m.createIssueBranchField = (m.createIssueBranchField + 1) % createIssueBranchFieldCount
+		return m.focusCreateIssueBranchField()
+	case "shift+tab":
+		m.createIssueBranchField = (m.createIssueBranchField - 1 + createIssueBranchFieldCount) % createIssueBranchFieldCount
+		return m.focusCreateIssueBranchField()
+	case "enter", "ctrl+s":
+		return m.submitCreateBranchForIssue()
+	}
+
+	var cmd tea.Cmd
+	if m.createIssueBranchField == createIssueBranchFieldName {
+		m.createIssueBranchName, cmd = m.createIssueBranchName.Update(msg)
+	} else {
+		m.createIssueBranchRef, cmd = m.createIssueBranchRef.Update(msg)
+	}
+	return m, cmd
+}
+
+func (m Model) focusCreateIssueBranchField() (Model, tea.Cmd) {
+	m.createIssueBranchName.Blur()
+	m.createIssueBranchRef.Blur()
+	if m.createIssueBranchField == createIssueBranchFieldName {
+		cmd := m.createIssueBranchName.Focus()
+		return m, cmd
+	}
+	cmd := m.createIssueBranchRef.Focus()
+	return m, cmd
+}
+
+func (m Model) submitCreateBranchForIssue() (Model, tea.Cmd) {
+	branchName := strings.TrimSpace(m.createIssueBranchName.Value())
+	ref := strings.TrimSpace(m.createIssueBranchRef.Value())
+	if branchName == "" {
+		return m, nil
+	}
+	if ref == "" && m.project != nil {
+		ref = m.project.DefaultBranch
+	}
+	if ref == "" {
+		ref = "main"
+	}
+
+	m.createIssueBranchName.Blur()
+	m.createIssueBranchRef.Blur()
+	m.state = stateLoading
+	m.loadMsg = fmt.Sprintf("Creating branch '%s'...", branchName)
+	return m, m.cmdCreateBranchForIssue(m.project.ID, branchName, ref, m.createIssueBranchIssue.IID)
+}
+
+func (m Model) cmdCreateBranchForIssue(projectID int, branch, ref string, issueIID int) tea.Cmd {
+	return func() tea.Msg {
+		err := m.client.CreateBranch(projectID, branch, ref)
+		if err != nil {
+			return errMsg{err}
+		}
+		return actionDoneMsg{fmt.Sprintf("🌿 Branch '%s' created for Issue #%d!", branch, issueIID)}
+	}
 }
 
 // ─── Server select key handler ────────────────────────────────────────────────
@@ -3666,6 +3830,8 @@ func (m Model) View() string {
 		return m.viewCreateIssue()
 	case stateEditIssue:
 		return m.viewEditIssue()
+	case stateCreateIssueBranch:
+		return m.viewCreateIssueBranch()
 	case stateDetail:
 		return m.viewDetail()
 	default:
@@ -3695,6 +3861,8 @@ func (m Model) viewBackground() string {
 		return m.viewCreateIssue()
 	case stateEditIssue:
 		return m.viewEditIssue()
+	case stateCreateIssueBranch:
+		return m.viewCreateIssueBranch()
 	case stateDetail:
 		return m.viewDetail()
 	default:
@@ -5379,6 +5547,82 @@ func (m Model) viewCreateIssue() string {
 	return overlay(bg, box, m.width, targetHeight, startX, startY)
 }
 
+// ─── Create Branch for Issue overlay ──────────────────────────────────────────
+
+func (m Model) viewCreateIssueBranch() string {
+	var rows []string
+
+	issIID := 0
+	issTitle := ""
+	if m.createIssueBranchIssue != nil {
+		issIID = m.createIssueBranchIssue.IID
+		issTitle = m.createIssueBranchIssue.Title
+	}
+
+	rows = append(rows, subtitleStyle.Render(fmt.Sprintf("🌿 Create Branch for Issue #%d", issIID)), "")
+	if issTitle != "" {
+		rows = append(rows, dimStyle.Render("Issue: "+truncate(issTitle, 56)), "")
+	}
+
+	fieldLabel := func(idx int, label string) string {
+		if m.createIssueBranchField == idx {
+			return accentStyle.Render("▶ " + label)
+		}
+		return dimStyle.Render("  " + label)
+	}
+
+	// Branch Name
+	nameBorderColor := colorBorder
+	if m.createIssueBranchField == createIssueBranchFieldName {
+		nameBorderColor = colorAccent
+	}
+	nameBox := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(nameBorderColor).
+		Padding(0, 1).
+		Width(58).
+		MarginLeft(2).
+		Render(m.createIssueBranchName.View())
+	rows = append(rows, fieldLabel(createIssueBranchFieldName, "Branch Name:"))
+	rows = append(rows, nameBox)
+	rows = append(rows, "")
+
+	// Source Ref
+	refBorderColor := colorBorder
+	if m.createIssueBranchField == createIssueBranchFieldRef {
+		refBorderColor = colorAccent
+	}
+	refBox := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(refBorderColor).
+		Padding(0, 1).
+		Width(58).
+		MarginLeft(2).
+		Render(m.createIssueBranchRef.View())
+	rows = append(rows, fieldLabel(createIssueBranchFieldRef, "Source Ref (Branch / Tag / Commit):"))
+	rows = append(rows, refBox)
+	rows = append(rows, "")
+
+	rows = append(rows, dimStyle.Render(
+		keyHint("Tab/Shift+Tab", "navigate fields")+"  "+
+			keyHint("Enter", "create branch")+"  "+
+			keyHint("Esc", "cancel"),
+	))
+
+	box := panelStyle.Padding(1, 3).Render(strings.Join(rows, "\n"))
+
+	bg := m.viewBackground()
+	dlgWidth := lipgloss.Width(box)
+	dlgHeight := lipgloss.Height(box)
+	targetHeight := m.height - m.getHeightOffset()
+	startX := (m.width - dlgWidth) / 2
+	startY := (targetHeight - dlgHeight) / 2
+	if startY < 0 {
+		startY = 0
+	}
+	return overlay(bg, box, m.width, targetHeight, startX, startY)
+}
+
 // ─── Edit Issue overlay ─────────────────────────────────────────────────────────
 
 func (m Model) viewEditIssue() string {
@@ -5646,6 +5890,7 @@ func (m Model) viewFooter() string {
 			hints = append(hints, keyHint("c", "create issue"))
 			if m.issueCursor < len(m.issues) {
 				hints = append(hints, keyHint("e", "edit issue"))
+				hints = append(hints, keyHint("b", "create branch"))
 				iss := m.issues[m.issueCursor]
 				if iss.State == "opened" {
 					hints = append(hints, keyHint("x", "close"))
@@ -5808,7 +6053,7 @@ func (m Model) viewDetailFooter() string {
 		if m.commentCursor >= 0 {
 			hints = append(hints, keyHint("r", "reply"), keyHint("e", "edit comment"), keyHint("d", "delete comment"))
 		} else {
-			hints = append(hints, keyHint("e", "edit issue"))
+			hints = append(hints, keyHint("e", "edit issue"), keyHint("b", "create branch"))
 		}
 		if m.issueDetail != nil && m.issueDetail.State == "opened" {
 			hints = append(hints, keyHint("x", "close"))

@@ -1448,6 +1448,19 @@ type CompareInfo struct {
 	Diffs   []*DiffFile
 }
 
+// CreateBranch creates a new branch in the GitLab project.
+func (c *Client) CreateBranch(projectID int, branch, ref string) error {
+	opts := &gl.CreateBranchOptions{
+		Branch: gl.Ptr(branch),
+		Ref:    gl.Ptr(ref),
+	}
+	_, _, err := c.raw.Branches.CreateBranch(projectID, opts)
+	if err != nil {
+		return fmt.Errorf("creating branch %q from %q: %w", branch, ref, err)
+	}
+	return nil
+}
+
 // DeleteBranch deletes a branch in the GitLab project.
 func (c *Client) DeleteBranch(projectID int, branch string) error {
 	_, err := c.raw.Branches.DeleteBranch(projectID, branch)
