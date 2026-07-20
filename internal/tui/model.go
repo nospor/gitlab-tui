@@ -27,6 +27,7 @@ const (
 	commentModeGeneral commentMode = iota
 	commentModeInline
 	commentModeReply
+	commentModeEdit
 )
 
 type branchDetailView int
@@ -106,6 +107,12 @@ type (
 	}
 	mrDiscussionsLoadedMsg struct {
 		discussions []*gitlab.MRDiscussion
+	}
+	issueDetailLoadedMsg struct {
+		issue *gitlab.IssueInfo
+	}
+	issueDiscussionsLoadedMsg struct {
+		discussions []*gitlab.IssueDiscussion
 	}
 	pipelineJobsLoadedMsg struct {
 		items []*gitlab.JobInfo
@@ -204,12 +211,14 @@ type Model struct {
 	mrDiffScrollOffset int    // scroll offset for the diff viewport
 	mrDiffPanelOpen    bool   // whether the diff panel is shown
 
-	// Comment composer
-	commentInput    textarea.Model
-	commentMode     commentMode
-	commentInlineFile *gitlab.DiffFile  // target file for inline comment
-	commentInlineLine gitlab.DiffLine   // target line for inline comment
-	commentReplyDiscussionID string     // target discussion ID for replies
+	// Comment composer & selection
+	commentInput             textarea.Model
+	commentMode              commentMode
+	commentInlineFile        *gitlab.DiffFile  // target file for inline comment
+	commentInlineLine        gitlab.DiffLine   // target line for inline comment
+	commentReplyDiscussionID string            // target discussion ID for replies
+	commentEditNoteID        int64             // target note ID for edits
+	commentCursor            int               // index of selected comment in detail view (-1 if none)
 
 	// Link selection
 	linkItems  []linkItem
@@ -230,11 +239,13 @@ type Model struct {
 	jobTraceFocus        bool
 
 	// Issue view
-	issues         []*gitlab.IssueInfo
-	issuePage      int
-	issueTotalPage int
-	issueCursor    int
-	issueDetail    *gitlab.IssueInfo
+	issues                  []*gitlab.IssueInfo
+	issuePage               int
+	issueTotalPage          int
+	issueCursor             int
+	issueDetail             *gitlab.IssueInfo
+	issueDiscussions        []*gitlab.IssueDiscussion
+	issueDetailScrollOffset int
 
 	// Project select view
 	projects         []*gitlab.ProjectInfo
@@ -525,6 +536,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clampMRDetailScroll()
 		return m, nil
 
+	case issueDetailLoadedMsg:
+		m.issueDetail = msg.issue
+		for i, iss := range m.issues {
+			if iss.IID == msg.issue.IID {
+				m.issues[i] = msg.issue
+				break
+			}
+		}
+		m.clampIssueDetailScroll()
+		return m, nil
+
+	case issueDiscussionsLoadedMsg:
+		m.issueDiscussions = msg.discussions
+		m.clampIssueDetailScroll()
+		return m, nil
+
 	case mrPipelinesLoadedMsg:
 		m.mrPipelines = msg.items
 		return m, nil
@@ -634,6 +661,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cmdLoadMRDetail(m.mrDetail.IID),
 				m.cmdLoadMRDiscussions(m.mrDetail.IID),
 				m.cmdLoadMRs(),
+			)
+		}
+		if m.state == stateDetail && m.tab == tabIssues && m.issueDetail != nil {
+			return m, tea.Batch(
+				m.cmdLoadIssueDetail(m.issueDetail.IID),
+				m.cmdLoadIssueDiscussions(m.issueDetail.IID),
+				m.cmdLoadIssues(),
 			)
 		}
 		if m.state == stateDetail && m.tab == tabPipelines && m.pipelineDetail != nil {
@@ -825,6 +859,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.branchCommitDiffPanelOpen = false
 				return m, nil
 			}
+			if m.commentCursor >= 0 {
+				m.commentCursor = -1
+				return m, nil
+			}
 			if m.mrDiffPanelOpen {
 				// Close diff panel first
 				m.mrDiffPanelOpen = false
@@ -857,6 +895,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mrPipelines = nil
 			m.pipelineSelectCursor = 0
 			m.pipelineDetail = nil
+			m.commentCursor = -1
+			m.commentEditNoteID = 0
 			m.pipelineJobs = nil
 			m.jobCursor = 0
 			m.jobTrace = ""
@@ -864,6 +904,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.jobTraceOpen = false
 			m.jobTraceFocus = false
 			m.issueDetail = nil
+			m.issueDiscussions = nil
+			m.issueDetailScrollOffset = 0
 			m.branchDetailName = ""
 			m.branchCommits = nil
 			m.branchCommitCursor = 0
@@ -1175,6 +1217,38 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 			m.mrDetailScrollOffset--
 			m.clampMRDetailScroll()
 			return m, nil
+		case "n", "J":
+			comments := m.getSelectableComments()
+			if len(comments) > 0 {
+				if m.commentCursor < len(comments)-1 {
+					m.commentCursor++
+				} else {
+					m.commentCursor = 0
+				}
+			}
+			return m, nil
+		case "N", "K":
+			comments := m.getSelectableComments()
+			if len(comments) > 0 {
+				if m.commentCursor > 0 {
+					m.commentCursor--
+				} else {
+					m.commentCursor = len(comments) - 1
+				}
+			}
+			return m, nil
+		case "r":
+			comments := m.getSelectableComments()
+			if m.commentCursor >= 0 && m.commentCursor < len(comments) {
+				sc := comments[m.commentCursor]
+				m.commentReplyDiscussionID = sc.DiscussionID
+				m.commentMode = commentModeReply
+				m.commentInput.SetValue("")
+				cmd := m.commentInput.Focus()
+				m.prevState = m.state
+				m.state = stateComment
+				return m, cmd
+			}
 		case "tab":
 			// Toggle diff panel
 			m.mrDiffPanelOpen = !m.mrDiffPanelOpen
@@ -1188,8 +1262,26 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 			m.state = stateComment
 			return m, cmd
 		case "e":
-			// Edit current MR
+			comments := m.getSelectableComments()
+			if m.commentCursor >= 0 && m.commentCursor < len(comments) {
+				sc := comments[m.commentCursor]
+				m.commentEditNoteID = sc.NoteID
+				m.commentMode = commentModeEdit
+				m.commentInput.SetValue(sc.Body)
+				cmd := m.commentInput.Focus()
+				m.prevState = m.state
+				m.state = stateComment
+				return m, cmd
+			}
+			// Edit current MR if no comment selected
 			return m.startEditMR()
+		case "d", "delete":
+			comments := m.getSelectableComments()
+			if m.commentCursor >= 0 && m.commentCursor < len(comments) {
+				sc := comments[m.commentCursor]
+				return m.promptConfirm("Delete Comment", fmt.Sprintf("Delete comment by @%s?", sc.Author),
+					m.cmdDeleteMRComment(sc.NoteID))
+			}
 		case "a":
 			return m.promptConfirm("Approve MR", fmt.Sprintf("Approve MR !%d: %s?", m.mrDetail.IID, m.mrDetail.Title),
 				m.cmdApproveMR(m.mrDetail.IID))
@@ -1318,6 +1410,83 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		switch key {
+		case "j", "down":
+			m.issueDetailScrollOffset++
+			m.clampIssueDetailScroll()
+			return m, nil
+		case "k", "up":
+			m.issueDetailScrollOffset--
+			m.clampIssueDetailScroll()
+			return m, nil
+		case "n", "J":
+			comments := m.getSelectableComments()
+			if len(comments) > 0 {
+				if m.commentCursor < len(comments)-1 {
+					m.commentCursor++
+				} else {
+					m.commentCursor = 0
+				}
+			}
+			return m, nil
+		case "p", "N", "K":
+			comments := m.getSelectableComments()
+			if len(comments) > 0 {
+				if m.commentCursor > 0 {
+					m.commentCursor--
+				} else {
+					m.commentCursor = len(comments) - 1
+				}
+			}
+			return m, nil
+		case "r":
+			comments := m.getSelectableComments()
+			if m.commentCursor >= 0 && m.commentCursor < len(comments) {
+				sc := comments[m.commentCursor]
+				m.commentReplyDiscussionID = sc.DiscussionID
+				m.commentMode = commentModeReply
+				m.commentInput.SetValue("")
+				cmd := m.commentInput.Focus()
+				m.prevState = m.state
+				m.state = stateComment
+				return m, cmd
+			}
+		case "c", "C":
+			// General comment on Issue
+			m.commentMode = commentModeGeneral
+			m.commentInput.SetValue("")
+			cmd := m.commentInput.Focus()
+			m.prevState = m.state
+			m.state = stateComment
+			return m, cmd
+		case "e":
+			comments := m.getSelectableComments()
+			if m.commentCursor >= 0 && m.commentCursor < len(comments) {
+				sc := comments[m.commentCursor]
+				m.commentEditNoteID = sc.NoteID
+				m.commentMode = commentModeEdit
+				m.commentInput.SetValue(sc.Body)
+				cmd := m.commentInput.Focus()
+				m.prevState = m.state
+				m.state = stateComment
+				return m, cmd
+			}
+		case "d", "delete":
+			comments := m.getSelectableComments()
+			if m.commentCursor >= 0 && m.commentCursor < len(comments) {
+				sc := comments[m.commentCursor]
+				return m.promptConfirm("Delete Comment", fmt.Sprintf("Delete comment by @%s?", sc.Author),
+					m.cmdDeleteIssueComment(sc.NoteID))
+			}
+		case "+":
+			m.state = stateLoading
+			m.prevState = stateDetail
+			m.loadMsg = "Voting..."
+			return m, m.cmdVoteUpIssue(m.issueDetail.IID)
+		case "-":
+			m.state = stateLoading
+			m.prevState = stateDetail
+			m.loadMsg = "Voting..."
+			return m, m.cmdVoteDownIssue(m.issueDetail.IID)
 		case "o":
 			m.linkItems = m.collectLinksForDetail()
 			if len(m.linkItems) > 0 {
@@ -1481,7 +1650,20 @@ func (m Model) handleCommentKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.commentInput.Blur()
 		m.state = stateLoading
+		if m.commentMode == commentModeEdit {
+			m.loadMsg = "Updating comment..."
+			if m.tab == tabIssues {
+				return m, m.cmdEditIssueComment(m.commentEditNoteID, body)
+			}
+			return m, m.cmdEditMRComment(m.commentEditNoteID, body)
+		}
 		m.loadMsg = "Posting comment..."
+		if m.tab == tabIssues {
+			if m.commentMode == commentModeReply {
+				return m, m.cmdReplyToIssueDiscussion(body)
+			}
+			return m, m.cmdCreateIssueComment(body)
+		}
 		if m.commentMode == commentModeInline {
 			return m, m.cmdCreateInlineComment(body)
 		} else if m.commentMode == commentModeReply {
@@ -2022,6 +2204,54 @@ func (m Model) handleConfirmKey(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+type SelectableComment struct {
+	NoteID       int64
+	DiscussionID string
+	Author       string
+	Body         string
+	CreatedAt    string
+	System       bool
+	IsMR         bool
+}
+
+func (m Model) getSelectableComments() []SelectableComment {
+	var out []SelectableComment
+	if m.tab == tabMRs {
+		for _, d := range m.mrDiscussions {
+			for _, n := range d.Notes {
+				if !n.System {
+					out = append(out, SelectableComment{
+						NoteID:       n.ID,
+						DiscussionID: d.ID,
+						Author:       n.Author,
+						Body:         n.Body,
+						CreatedAt:    n.CreatedAt,
+						System:       n.System,
+						IsMR:         true,
+					})
+				}
+			}
+		}
+	} else if m.tab == tabIssues {
+		for _, d := range m.issueDiscussions {
+			for _, n := range d.Notes {
+				if !n.System {
+					out = append(out, SelectableComment{
+						NoteID:       n.ID,
+						DiscussionID: d.ID,
+						Author:       n.Author,
+						Body:         n.Body,
+						CreatedAt:    n.CreatedAt,
+						System:       n.System,
+						IsMR:         false,
+					})
+				}
+			}
+		}
+	}
+	return out
+}
+
 // ─── Diff cursor helpers ──────────────────────────────────────────────────────
 
 func (m *Model) diffLineCursorDown() {
@@ -2305,6 +2535,7 @@ func (m Model) openDetail() (Model, tea.Cmd) {
 	case tabMRs:
 		if m.mrCursor < len(m.mrs) {
 			m.mrDetail = m.mrs[m.mrCursor] // placeholder until fresh fetch arrives
+			m.commentCursor = -1
 			m.prevState = stateMain
 			m.state = stateDetail
 			return m, tea.Batch(
@@ -2339,8 +2570,15 @@ func (m Model) openDetail() (Model, tea.Cmd) {
 	case tabIssues:
 		if m.issueCursor < len(m.issues) {
 			m.issueDetail = m.issues[m.issueCursor]
+			m.issueDiscussions = nil
+			m.issueDetailScrollOffset = 0
+			m.commentCursor = -1
 			m.prevState = stateMain
 			m.state = stateDetail
+			return m, tea.Batch(
+				m.cmdLoadIssueDetail(m.issueDetail.IID),
+				m.cmdLoadIssueDiscussions(m.issueDetail.IID),
+			)
 		}
 	case tabProjects:
 		if m.projectCursor < len(m.projects) {
@@ -2795,6 +3033,125 @@ func (m Model) cmdVoteDownMR(iid int) tea.Cmd {
 	username := m.username
 	return func() tea.Msg {
 		added, err := m.client.ToggleVoteMR(pid, iid, "thumbsdown", username)
+		if err != nil {
+			return errMsg{err}
+		}
+		if added {
+			return actionDoneMsg{"👎 Vote down added!"}
+		}
+		return actionDoneMsg{"👎 Vote down removed."}
+	}
+}
+
+func (m Model) cmdEditMRComment(noteID int64, body string) tea.Cmd {
+	pid := m.project.ID
+	iid := m.mrDetail.IID
+	return func() tea.Msg {
+		if err := m.client.EditMRComment(pid, iid, noteID, body); err != nil {
+			return errMsg{err}
+		}
+		return actionDoneMsg{"💬 Comment updated!"}
+	}
+}
+
+func (m Model) cmdDeleteMRComment(noteID int64) tea.Cmd {
+	pid := m.project.ID
+	iid := m.mrDetail.IID
+	return func() tea.Msg {
+		if err := m.client.DeleteMRComment(pid, iid, noteID); err != nil {
+			return errMsg{err}
+		}
+		return actionDoneMsg{"🗑️ Comment deleted!"}
+	}
+}
+
+func (m Model) cmdEditIssueComment(noteID int64, body string) tea.Cmd {
+	pid := m.project.ID
+	iid := m.issueDetail.IID
+	return func() tea.Msg {
+		if err := m.client.EditIssueComment(pid, iid, noteID, body); err != nil {
+			return errMsg{err}
+		}
+		return actionDoneMsg{"💬 Comment updated!"}
+	}
+}
+
+func (m Model) cmdDeleteIssueComment(noteID int64) tea.Cmd {
+	pid := m.project.ID
+	iid := m.issueDetail.IID
+	return func() tea.Msg {
+		if err := m.client.DeleteIssueComment(pid, iid, noteID); err != nil {
+			return errMsg{err}
+		}
+		return actionDoneMsg{"🗑️ Comment deleted!"}
+	}
+}
+
+func (m Model) cmdLoadIssueDetail(iid int) tea.Cmd {
+	pid := m.project.ID
+	return func() tea.Msg {
+		iss, err := m.client.GetIssue(pid, iid)
+		if err != nil {
+			return errMsg{err}
+		}
+		return issueDetailLoadedMsg{iss}
+	}
+}
+
+func (m Model) cmdLoadIssueDiscussions(iid int) tea.Cmd {
+	pid := m.project.ID
+	return func() tea.Msg {
+		discs, err := m.client.GetIssueDiscussions(pid, iid)
+		if err != nil {
+			return errMsg{err}
+		}
+		return issueDiscussionsLoadedMsg{discussions: discs}
+	}
+}
+
+func (m Model) cmdCreateIssueComment(body string) tea.Cmd {
+	pid := m.project.ID
+	iid := m.issueDetail.IID
+	return func() tea.Msg {
+		if err := m.client.CreateIssueComment(pid, iid, body); err != nil {
+			return errMsg{err}
+		}
+		return actionDoneMsg{"💬 Comment posted!"}
+	}
+}
+
+func (m Model) cmdReplyToIssueDiscussion(body string) tea.Cmd {
+	pid := m.project.ID
+	iid := m.issueDetail.IID
+	discussionID := m.commentReplyDiscussionID
+	return func() tea.Msg {
+		if err := m.client.ReplyToIssueDiscussion(pid, iid, discussionID, body); err != nil {
+			return errMsg{err}
+		}
+		return actionDoneMsg{"💬 Reply posted!"}
+	}
+}
+
+func (m Model) cmdVoteUpIssue(iid int) tea.Cmd {
+	pid := m.project.ID
+	username := m.username
+	return func() tea.Msg {
+		added, err := m.client.ToggleVoteIssue(pid, iid, "thumbsup", username)
+		if err != nil {
+			return errMsg{err}
+		}
+		if added {
+			return actionDoneMsg{"👍 Vote up added!"}
+		}
+		return actionDoneMsg{"👍 Vote up removed."}
+	}
+}
+
+func (m Model) cmdVoteDownIssue(iid int) tea.Cmd {
+	pid := m.project.ID
+	username := m.username
+	return func() tea.Msg {
+		added, err := m.client.ToggleVoteIssue(pid, iid, "thumbsdown", username)
 		if err != nil {
 			return errMsg{err}
 		}
@@ -3271,7 +3628,7 @@ func (m Model) viewDetail() string {
 	case tabPipelines:
 		body = m.viewPipelineDetail(bodyH)
 	case tabIssues:
-		body = m.viewIssueDetail()
+		body = m.viewIssueDetail(bodyH)
 	}
 
 	bodyPanel := lipgloss.NewStyle().Width(m.width).Height(bodyH).MaxHeight(bodyH).Render(body)
@@ -3684,6 +4041,7 @@ func (m Model) viewMRDetailLinesForWidth(w int) ([]string, []string) {
 	)
 
 	var commentsRaw []string
+	selectableIdx := 0
 	if len(m.mrDiscussions) > 0 {
 		for _, d := range m.mrDiscussions {
 			if len(d.Notes) == 0 {
@@ -3695,6 +4053,9 @@ func (m Model) viewMRDetailLinesForWidth(w int) ([]string, []string) {
 				if note.System {
 					noteContent = dimStyle.Italic(true).Render(fmt.Sprintf("• %s (%s)", note.Body, note.CreatedAt))
 				} else {
+					isSelected := (selectableIdx == m.commentCursor)
+					selectableIdx++
+
 					var threadHeader string
 					if noteIdx == 0 {
 						if note.Position != nil {
@@ -3712,10 +4073,18 @@ func (m Model) viewMRDetailLinesForWidth(w int) ([]string, []string) {
 						}
 					}
 
-					authorPart := boldStyle.Render("@" + note.Author)
+					var authorPart string
+					if isSelected {
+						authorPart = selectedStyle.Render("▶ @" + note.Author + " (selected)")
+					} else {
+						authorPart = boldStyle.Render("@" + note.Author)
+					}
 					timePart := dimStyle.Render(" on " + note.CreatedAt)
 
 					bodyStyle := lipgloss.NewStyle().Foreground(colorText).Width(inner - 4)
+					if isSelected {
+						bodyStyle = bodyStyle.Foreground(colorTeal).Bold(true)
+					}
 					bodyWrapped := bodyStyle.Render(note.Body)
 
 					indent := "  "
@@ -3984,21 +4353,76 @@ func (m Model) viewPipelineDetail(bodyH int) string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, sep, rightPanel)
 }
 
-func (m Model) viewIssueDetail() string {
+func (m Model) viewIssueDetail(bodyH int) string {
+	headerLines, commentLines := m.viewIssueDetailLinesForWidth(m.width)
+	H := len(headerLines)
+	C := len(commentLines)
+
+	if H >= bodyH {
+		// combined scrolling
+		combinedLines := append(headerLines, commentLines...)
+		totalLines := len(combinedLines)
+		maxScroll := totalLines - bodyH
+		if maxScroll < 0 {
+			maxScroll = 0
+		}
+		offset := m.issueDetailScrollOffset
+		if offset > maxScroll {
+			offset = maxScroll
+		}
+		if offset < 0 {
+			offset = 0
+		}
+		end := offset + bodyH
+		if end > totalLines {
+			end = totalLines
+		}
+		return strings.Join(combinedLines[offset:end], "\n")
+	} else {
+		// comment-only scrolling
+		commentsHeight := bodyH - H
+		maxScroll := C - commentsHeight
+		if maxScroll < 0 {
+			maxScroll = 0
+		}
+		offset := m.issueDetailScrollOffset
+		if offset > maxScroll {
+			offset = maxScroll
+		}
+		if offset < 0 {
+			offset = 0
+		}
+		end := offset + commentsHeight
+		if end > C {
+			end = C
+		}
+		slice := append(headerLines, commentLines[offset:end]...)
+		return strings.Join(slice, "\n")
+	}
+}
+
+func (m Model) viewIssueDetailLinesForWidth(w int) ([]string, []string) {
 	iss := m.issueDetail
 	if iss == nil {
-		return ""
+		return []string{""}, nil
 	}
-	w := m.width - 4
 
-	title := boldStyle.Width(w).Render(fmt.Sprintf("#%d  %s", iss.IID, iss.Title))
-	divider := lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", w))
+	inner := w - 4
+	if inner < 4 {
+		inner = 4
+	}
 
-	desc := iss.Description
-	if desc == "" {
-		desc = dimStyle.Italic(true).Render("No description provided.")
-	} else {
-		desc = dimStyle.Width(w).Render(truncateLines(desc, 20, w))
+	title := boldStyle.Width(inner).Render(fmt.Sprintf("#%d  %s", iss.IID, iss.Title))
+	status := statusBadge(iss.State)
+	meta := lipgloss.JoinHorizontal(lipgloss.Center,
+		status,
+		"  ",
+		dimStyle.Render("Author: "), accentStyle.Render(iss.Author),
+	)
+
+	var assignees string
+	if len(iss.Assignees) > 0 {
+		assignees = dimStyle.Render("Assignees: ") + strings.Join(iss.Assignees, ", ")
 	}
 
 	var labels string
@@ -4010,18 +4434,29 @@ func (m Model) viewIssueDetail() string {
 		labels = strings.Join(lb, " ")
 	}
 
-	lines := []string{
+	divider := lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", inner))
+
+	desc := iss.Description
+	if desc == "" {
+		desc = dimStyle.Italic(true).Render("No description provided.")
+	} else {
+		desc = dimStyle.Width(inner).Render(truncateLines(desc, 20, inner))
+	}
+
+	var headerRaw []string
+	headerRaw = append(headerRaw,
 		"",
 		lipgloss.NewStyle().PaddingLeft(2).Render(title),
-		lipgloss.NewStyle().PaddingLeft(2).Render(lipgloss.JoinHorizontal(lipgloss.Center,
-			statusBadge(iss.State), "  ",
-			dimStyle.Render("Author: "), accentStyle.Render(iss.Author),
-		)),
+		lipgloss.NewStyle().PaddingLeft(2).Render(meta),
+	)
+	if assignees != "" {
+		headerRaw = append(headerRaw, lipgloss.NewStyle().PaddingLeft(2).Render(assignees))
 	}
 	if labels != "" {
-		lines = append(lines, lipgloss.NewStyle().PaddingLeft(2).Render(labels))
+		headerRaw = append(headerRaw, lipgloss.NewStyle().PaddingLeft(2).Render(labels))
 	}
-	lines = append(lines,
+
+	headerRaw = append(headerRaw,
 		lipgloss.NewStyle().PaddingLeft(2).Render(dimStyle.Render("Updated: "+iss.UpdatedAt+"  Created: "+iss.CreatedAt)),
 		"",
 		lipgloss.NewStyle().PaddingLeft(2).Render(divider),
@@ -4029,12 +4464,116 @@ func (m Model) viewIssueDetail() string {
 		lipgloss.NewStyle().PaddingLeft(2).Render(desc),
 		"",
 		lipgloss.NewStyle().PaddingLeft(2).Render(
-			dimStyle.Render(fmt.Sprintf("👍 %d  👎 %d", iss.Upvotes, iss.Downvotes))),
+			dimStyle.Render(fmt.Sprintf("👍 %d  👎 %d  💬 %d", iss.Upvotes, iss.Downvotes, iss.UserNotesCount))),
 		"",
 		lipgloss.NewStyle().PaddingLeft(2).Render(
 			lipgloss.NewStyle().Foreground(colorInfo).Render("🔗 "+iss.WebURL)),
+		"",
+		lipgloss.NewStyle().PaddingLeft(2).Render(subtitleStyle.Render("💬 Discussions & Comments")),
+		lipgloss.NewStyle().PaddingLeft(2).Render(divider),
 	)
-	return strings.Join(lines, "\n")
+
+	var commentsRaw []string
+	selectableIdx := 0
+	if len(m.issueDiscussions) > 0 {
+		for _, d := range m.issueDiscussions {
+			if len(d.Notes) == 0 {
+				continue
+			}
+
+			for noteIdx, note := range d.Notes {
+				var noteContent string
+				if note.System {
+					noteContent = dimStyle.Italic(true).Render(fmt.Sprintf("• %s (%s)", note.Body, note.CreatedAt))
+				} else {
+					isSelected := (selectableIdx == m.commentCursor)
+					selectableIdx++
+
+					var threadHeader string
+					if noteIdx == 0 {
+						threadHeader = accentStyle.Render("General Thread")
+					}
+
+					var authorPart string
+					if isSelected {
+						authorPart = selectedStyle.Render("▶ @" + note.Author + " (selected)")
+					} else {
+						authorPart = boldStyle.Render("@" + note.Author)
+					}
+					timePart := dimStyle.Render(" on " + note.CreatedAt)
+
+					bodyStyle := lipgloss.NewStyle().Foreground(colorText).Width(inner - 4)
+					if isSelected {
+						bodyStyle = bodyStyle.Foreground(colorTeal).Bold(true)
+					}
+					bodyWrapped := bodyStyle.Render(note.Body)
+
+					indent := "  "
+					if noteIdx > 0 {
+						indent = "    "
+					}
+
+					var blockLines []string
+					if threadHeader != "" {
+						blockLines = append(blockLines, indent+threadHeader)
+					}
+					blockLines = append(blockLines, indent+authorPart+timePart)
+
+					for _, bLine := range strings.Split(bodyWrapped, "\n") {
+						blockLines = append(blockLines, indent+"  "+bLine)
+					}
+
+					noteContent = strings.Join(blockLines, "\n")
+				}
+
+				commentsRaw = append(commentsRaw, lipgloss.NewStyle().PaddingLeft(2).Render(noteContent), "")
+			}
+			commentsRaw = append(commentsRaw, lipgloss.NewStyle().PaddingLeft(2).Render(divider))
+		}
+	} else {
+		commentsRaw = append(commentsRaw,
+			lipgloss.NewStyle().PaddingLeft(2).Render(dimStyle.Italic(true).Render("No comments yet or loading...")),
+		)
+	}
+
+	headerContent := strings.Join(headerRaw, "\n")
+	commentsContent := strings.Join(commentsRaw, "\n")
+
+	return strings.Split(headerContent, "\n"), strings.Split(commentsContent, "\n")
+}
+
+func (m Model) issueDetailMaxScroll(bodyH int) int {
+	if m.issueDetail == nil {
+		return 0
+	}
+	headerLines, commentLines := m.viewIssueDetailLinesForWidth(m.width)
+	H := len(headerLines)
+	C := len(commentLines)
+	if H >= bodyH {
+		total := H + C
+		maxScroll := total - bodyH
+		if maxScroll < 0 {
+			return 0
+		}
+		return maxScroll
+	}
+	commentsHeight := bodyH - H
+	maxScroll := C - commentsHeight
+	if maxScroll < 0 {
+		return 0
+	}
+	return maxScroll
+}
+
+func (m *Model) clampIssueDetailScroll() {
+	bodyH := m.getBodyHeight()
+	maxScroll := m.issueDetailMaxScroll(bodyH)
+	if m.issueDetailScrollOffset > maxScroll {
+		m.issueDetailScrollOffset = maxScroll
+	}
+	if m.issueDetailScrollOffset < 0 {
+		m.issueDetailScrollOffset = 0
+	}
 }
 
 // ─── Server select overlay ────────────────────────────────────────────────────
@@ -4402,7 +4941,7 @@ func (m Model) viewPipelineSelect() string {
 
 func (m Model) viewCommentComposer() string {
 	var title, hint string
-	if m.commentMode == commentModeInline {
+	if m.commentMode == commentModeInline && m.commentInlineFile != nil {
 		l := m.commentInlineLine
 		f := m.commentInlineFile
 		fileName := f.NewPath
@@ -4419,9 +4958,18 @@ func (m Model) viewCommentComposer() string {
 		title = subtitleStyle.Render("Inline Comment") + "  " +
 			dimStyle.Render(fileName+" "+lineInfo)
 		hint = lipgloss.NewStyle().Foreground(colorSuccess).Italic(true).Render(snippet)
-	} else {
+	} else if m.commentMode == commentModeEdit {
+		title = subtitleStyle.Render("Edit Comment")
+		hint = dimStyle.Render("Editing comment...")
+	} else if m.tab == tabIssues && m.issueDetail != nil {
+		title = subtitleStyle.Render("Issue Comment")
+		hint = dimStyle.Render(fmt.Sprintf("Commenting on Issue #%d", m.issueDetail.IID))
+	} else if m.mrDetail != nil {
 		title = subtitleStyle.Render("MR Comment")
 		hint = dimStyle.Render(fmt.Sprintf("Commenting on MR !%d", m.mrDetail.IID))
+	} else {
+		title = subtitleStyle.Render("Add Comment")
+		hint = dimStyle.Render("Write a comment...")
 	}
 
 	inputBox := lipgloss.NewStyle().
@@ -4571,11 +5119,15 @@ func (m Model) viewDetailFooter() string {
 		} else {
 			hints = []string{
 				keyHint("j/k", "scroll"),
-				keyHint("Tab", "changes"),
-				keyHint("C", "comment"),
-				keyHint("e", "edit"),
-				keyHint("a", "approve"),
+				keyHint("n/p", "select comment"),
+				keyHint("C", "new comment"),
 			}
+			if m.commentCursor >= 0 {
+				hints = append(hints, keyHint("r", "reply"), keyHint("e", "edit comment"), keyHint("d", "delete comment"))
+			} else {
+				hints = append(hints, keyHint("e", "edit MR"))
+			}
+			hints = append(hints, keyHint("a", "approve"))
 			if m.mrDetail != nil && m.mrDetail.State == "opened" {
 				hints = append(hints, keyHint("m", "merge"))
 				hints = append(hints, keyHint("x", "close"))
@@ -4648,10 +5200,20 @@ func (m Model) viewDetailFooter() string {
 		}
 	case tabIssues:
 		hints = []string{
+			keyHint("j/k", "scroll"),
+			keyHint("n/p", "select comment"),
+			keyHint("C", "new comment"),
+		}
+		if m.commentCursor >= 0 {
+			hints = append(hints, keyHint("r", "reply"), keyHint("e", "edit comment"), keyHint("d", "delete comment"))
+		}
+		hints = append(hints,
+			keyHint("+", "vote up"),
+			keyHint("-", "vote down"),
 			keyHint("o", "open link"),
 			keyHint("Esc", "back"),
 			keyHint("q", "quit"),
-		}
+		)
 	default:
 		hints = []string{
 			keyHint("Esc", "back"),

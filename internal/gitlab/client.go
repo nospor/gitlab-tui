@@ -294,6 +294,26 @@ func (c *Client) CreateMRComment(projectID, mriid int, body string) error {
 	return nil
 }
 
+// EditMRComment updates the body of an existing MR comment.
+func (c *Client) EditMRComment(projectID, mriid int, noteID int64, body string) error {
+	_, _, err := c.raw.Notes.UpdateMergeRequestNote(projectID, int64(mriid), noteID, &gl.UpdateMergeRequestNoteOptions{
+		Body: &body,
+	})
+	if err != nil {
+		return fmt.Errorf("editing MR comment %d: %w", noteID, err)
+	}
+	return nil
+}
+
+// DeleteMRComment deletes an existing MR comment.
+func (c *Client) DeleteMRComment(projectID, mriid int, noteID int64) error {
+	_, err := c.raw.Notes.DeleteMergeRequestNote(projectID, int64(mriid), noteID)
+	if err != nil {
+		return fmt.Errorf("deleting MR comment %d: %w", noteID, err)
+	}
+	return nil
+}
+
 // CreateMRInlineComment posts an inline comment on a specific diff line.
 func (c *Client) CreateMRInlineComment(projectID, mriid int, body, baseSHA, startSHA, headSHA, oldPath, newPath string, oldLine, newLine int) error {
 	posType := "text"
@@ -922,18 +942,19 @@ const (
 
 // IssueInfo holds a summary of an issue.
 type IssueInfo struct {
-	IID         int
-	Title       string
-	State       string
-	Author      string
-	WebURL      string
-	CreatedAt   string
-	UpdatedAt   string
-	Labels      []string
-	Description string
-	Assignees   []string
-	Upvotes     int
-	Downvotes   int
+	IID            int
+	Title          string
+	State          string
+	Author         string
+	WebURL         string
+	CreatedAt      string
+	UpdatedAt      string
+	Labels         []string
+	Description    string
+	Assignees      []string
+	Upvotes        int
+	Downvotes      int
+	UserNotesCount int
 }
 
 // ListIssues lists issues for a project.
@@ -957,13 +978,14 @@ func (c *Client) ListIssues(projectID int, state IssueState, page int) ([]*Issue
 	var result []*IssueInfo
 	for _, iss := range issues {
 		info := &IssueInfo{
-			IID:         i64(iss.IID),
-			Title:       iss.Title,
-			State:       iss.State,
-			WebURL:      iss.WebURL,
-			Description: iss.Description,
-			Upvotes:     i64(iss.Upvotes),
-			Downvotes:   i64(iss.Downvotes),
+			IID:            i64(iss.IID),
+			Title:          iss.Title,
+			State:          iss.State,
+			WebURL:         iss.WebURL,
+			Description:    iss.Description,
+			Upvotes:        i64(iss.Upvotes),
+			Downvotes:      i64(iss.Downvotes),
+			UserNotesCount: i64(iss.UserNotesCount),
 		}
 		if iss.Author != nil {
 			info.Author = iss.Author.Username
@@ -983,6 +1005,163 @@ func (c *Client) ListIssues(projectID int, state IssueState, page int) ([]*Issue
 		result = append(result, info)
 	}
 	return result, i64(resp.TotalPages), nil
+}
+
+// GetIssue fetches a single issue by IID with up-to-date field values.
+func (c *Client) GetIssue(projectID, issueIID int) (*IssueInfo, error) {
+	iss, _, err := c.raw.Issues.GetIssue(projectID, int64(issueIID))
+	if err != nil {
+		return nil, fmt.Errorf("getting issue #%d: %w", issueIID, err)
+	}
+	info := &IssueInfo{
+		IID:            i64(iss.IID),
+		Title:          iss.Title,
+		State:          iss.State,
+		WebURL:         iss.WebURL,
+		Description:    iss.Description,
+		Upvotes:        i64(iss.Upvotes),
+		Downvotes:      i64(iss.Downvotes),
+		UserNotesCount: i64(iss.UserNotesCount),
+	}
+	if iss.Author != nil {
+		info.Author = iss.Author.Username
+	}
+	if iss.CreatedAt != nil {
+		info.CreatedAt = iss.CreatedAt.Format("2006-01-02 15:04")
+	}
+	if iss.UpdatedAt != nil {
+		info.UpdatedAt = iss.UpdatedAt.Format("2006-01-02 15:04")
+	}
+	for _, l := range iss.Labels {
+		info.Labels = append(info.Labels, l)
+	}
+	for _, a := range iss.Assignees {
+		info.Assignees = append(info.Assignees, a.Username)
+	}
+	return info, nil
+}
+
+// IssueDiscussion represents a GitLab discussion thread on an issue.
+type IssueDiscussion struct {
+	ID             string
+	IndividualNote bool
+	Notes          []*IssueNote
+}
+
+// IssueNote represents a single comment or event in an issue discussion thread.
+type IssueNote struct {
+	ID        int64
+	Body      string
+	Author    string
+	System    bool
+	CreatedAt string
+}
+
+// GetIssueDiscussions fetches all discussion threads for an issue.
+func (c *Client) GetIssueDiscussions(projectID, issueIID int) ([]*IssueDiscussion, error) {
+	opts := &gl.ListIssueDiscussionsOptions{
+		ListOptions: gl.ListOptions{
+			Page:    1,
+			PerPage: 100,
+		},
+	}
+	var allDiscussions []*gl.Discussion
+	for {
+		discussions, resp, err := c.raw.Discussions.ListIssueDiscussions(projectID, int64(issueIID), opts)
+		if err != nil {
+			return nil, fmt.Errorf("listing issue discussions: %w", err)
+		}
+		allDiscussions = append(allDiscussions, discussions...)
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = int64(resp.NextPage)
+	}
+
+	var result []*IssueDiscussion
+	for _, d := range allDiscussions {
+		disc := &IssueDiscussion{
+			ID:             d.ID,
+			IndividualNote: d.IndividualNote,
+		}
+		for _, n := range d.Notes {
+			note := &IssueNote{
+				ID:     n.ID,
+				Body:   ConvertHTMLToMarkdown(n.Body),
+				System: n.System,
+			}
+			note.Author = n.Author.Username
+			if n.CreatedAt != nil {
+				note.CreatedAt = n.CreatedAt.Format("2006-01-02 15:04")
+			}
+			disc.Notes = append(disc.Notes, note)
+		}
+		result = append(result, disc)
+	}
+	return result, nil
+}
+
+// ReplyToIssueDiscussion replies to an existing discussion thread on an issue.
+func (c *Client) ReplyToIssueDiscussion(projectID, issueIID int, discussionID string, body string) error {
+	opt := &gl.AddIssueDiscussionNoteOptions{
+		Body: &body,
+	}
+	_, _, err := c.raw.Discussions.AddIssueDiscussionNote(projectID, int64(issueIID), discussionID, opt)
+	if err != nil {
+		return fmt.Errorf("replying to issue discussion thread: %w", err)
+	}
+	return nil
+}
+
+// CreateIssueComment posts a general note on an issue.
+func (c *Client) CreateIssueComment(projectID, issueIID int, body string) error {
+	_, _, err := c.raw.Notes.CreateIssueNote(projectID, int64(issueIID), &gl.CreateIssueNoteOptions{
+		Body: &body,
+	})
+	if err != nil {
+		return fmt.Errorf("creating issue comment: %w", err)
+	}
+	return nil
+}
+
+// EditIssueComment updates the body of an existing issue comment.
+func (c *Client) EditIssueComment(projectID, issueIID int, noteID int64, body string) error {
+	_, _, err := c.raw.Notes.UpdateIssueNote(projectID, int64(issueIID), noteID, &gl.UpdateIssueNoteOptions{
+		Body: &body,
+	})
+	if err != nil {
+		return fmt.Errorf("editing issue comment %d: %w", noteID, err)
+	}
+	return nil
+}
+
+// DeleteIssueComment deletes an existing issue comment.
+func (c *Client) DeleteIssueComment(projectID, issueIID int, noteID int64) error {
+	_, err := c.raw.Notes.DeleteIssueNote(projectID, int64(issueIID), noteID)
+	if err != nil {
+		return fmt.Errorf("deleting issue comment %d: %w", noteID, err)
+	}
+	return nil
+}
+
+// ToggleVoteIssue adds or removes a thumbsup/thumbsdown award emoji on an issue.
+func (c *Client) ToggleVoteIssue(projectID, issueIID int, vote, username string) (added bool, err error) {
+	emojis, _, err := c.raw.AwardEmoji.ListIssueAwardEmoji(projectID, int64(issueIID), nil)
+	if err != nil {
+		return false, fmt.Errorf("listing issue award emoji: %w", err)
+	}
+	for _, e := range emojis {
+		if e.Name == vote && e.User.Username == username {
+			// Already voted — remove it.
+			_, err = c.raw.AwardEmoji.DeleteIssueAwardEmoji(projectID, int64(issueIID), int64(e.ID))
+			return false, err
+		}
+	}
+	// Not yet voted — add it.
+	_, _, err = c.raw.AwardEmoji.CreateIssueAwardEmoji(projectID, int64(issueIID), &gl.CreateAwardEmojiOptions{
+		Name: vote,
+	})
+	return true, err
 }
 
 // ─── Branches ────────────────────────────────────────────────────────────────

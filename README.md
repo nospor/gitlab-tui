@@ -9,7 +9,7 @@ Built with [BubbleTea](https://github.com/charmbracelet/bubbletea) and the offic
 - 🔀 **Merge Requests** — list, filter by state (open/merged/closed), view details, approve, merge, close, edit existing MRs, and **create new MRs** via an interactive wizard
 - 🌿 **Branches** — list branches, delete branch (with confirmation), create MR directly from a branch, view commits history, and compare branches (showing commit differences and changed files diff)
 - 🚀 **Pipelines** — list, view details (with dual-pane layout showing jobs and statuses), automatic background refresh (every 5s) for active pipelines, retry/cancel pipelines, restart individual jobs, scroll/search job trace logs, and open traces directly in your external editor
-- 🐛 **Issues** — list, view details
+- 🐛 **Issues** — list, view details with discussion threads & comments, post new comments, vote up/down, select/edit/delete comments
 - 📁 **Projects** — browse and switch projects on the current server
 - 🔌 **Multiple servers** — configure several GitLab instances, switch between them
 - 🧠 **Auto-detection** — detects server and project from the current directory's `git remote`
@@ -143,20 +143,23 @@ Both SSH and HTTPS remotes are supported:
 
 ### MR detail
 
-| Key       | Action                 |
-| --------- | ---------------------- |
-| `j` / `k` | Scroll detail          |
-| `Tab`     | Toggle changes panel   |
-| `C`       | Comment                |
-| `e`       | Edit MR                |
-| `a`       | Approve MR             |
-| `m`       | Merge MR               |
-| `x`       | Close MR               |
-| `O`       | Reopen MR (closed MRs) |
-| `+` / `-` | Vote up / down         |
-| `o`       | Open link selector     |
-| `p`       | Open pipeline selector |
-| `Esc`     | Back to list           |
+| Key       | Action                                                             |
+| --------- | ------------------------------------------------------------------ |
+| `j` / `k` | Scroll detail                                                      |
+| `n` / `N` | Select next / previous comment (`J` / `K` also supported)          |
+| `Tab`     | Toggle changes panel                                               |
+| `C`       | Post new comment                                                   |
+| `r`       | Reply to selected comment thread                                   |
+| `e`       | Edit selected comment (or edit MR if no comment selected)          |
+| `d`       | Delete selected comment                                            |
+| `a`       | Approve MR                                                         |
+| `m`       | Merge MR                                                           |
+| `x`       | Close MR                                                           |
+| `O`       | Reopen MR (closed MRs)                                             |
+| `+` / `-` | Vote up / down                                                     |
+| `o`       | Open link selector                                                 |
+| `p`       | Open pipeline selector                                             |
+| `Esc`     | Clear comment selection (if active) or back to list                |
 
 ### Branch commits & Compare detail
 
@@ -231,10 +234,17 @@ Pick the destination branch. The source branch is excluded from the list. The re
 
 ### Issue detail
 
-| Key   | Action             |
-| ----- | ------------------ |
-| `o`   | Open link selector |
-| `Esc` | Back to list       |
+| Key       | Action                                                             |
+| --------- | ------------------------------------------------------------------ |
+| `j` / `k` | Scroll detail                                                      |
+| `n` / `p` | Select next / previous comment (`J` / `K` also supported)          |
+| `C` / `c` | Post new comment                                                   |
+| `r`       | Reply to selected comment thread                                   |
+| `e`       | Edit selected comment                                              |
+| `d`       | Delete selected comment                                            |
+| `+` / `-` | Vote up / down                                                     |
+| `o`       | Open link selector                                                 |
+| `Esc`     | Clear comment selection (if active) or back to list                |
 
 ## Project structure
 
