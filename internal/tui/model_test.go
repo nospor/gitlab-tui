@@ -260,3 +260,120 @@ func TestIssueStateToggleKey(t *testing.T) {
 		t.Errorf("expected issueState to be opened, got %v", m.issueState)
 	}
 }
+
+func TestCloseAndReopenIssueKey(t *testing.T) {
+	InitTheme("catppuccin")
+
+	m := Model{
+		cfg: &config.Config{
+			Servers: []config.Server{
+				{Name: "GitLab", URL: "https://gitlab.com"},
+			},
+		},
+		tab:     tabIssues,
+		state:   stateDetail,
+		project: &gitlab.ProjectInfo{ID: 1},
+		issueDetail: &gitlab.IssueInfo{
+			IID:   55,
+			Title: "Test Issue",
+			State: "opened",
+		},
+		width:  80,
+		height: 24,
+	}
+
+	footer := m.viewDetailFooter()
+	if !strings.Contains(footer, "x") || !strings.Contains(footer, "close") {
+		t.Errorf("expected detail footer to contain 'x close', got: %s", footer)
+	}
+
+	// Update with key "x" to close opened issue
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}}
+	res, _ := m.Update(msg)
+
+	newModel := res.(Model)
+	if newModel.state != stateConfirm {
+		t.Errorf("expected state to be stateConfirm, got %v", newModel.state)
+	}
+	if newModel.confirm == nil || newModel.confirm.label != "Close Issue #55?" {
+		t.Errorf("expected confirmation prompt for Close Issue #55, got %v", newModel.confirm)
+	}
+
+	// Change state to closed and test reopening with 'O'
+	m.issueDetail.State = "closed"
+	footer = m.viewDetailFooter()
+	if !strings.Contains(footer, "O") || !strings.Contains(footer, "reopen") {
+		t.Errorf("expected detail footer to contain 'O reopen', got: %s", footer)
+	}
+
+	msgO := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'O'}}
+	resO, _ := m.Update(msgO)
+
+	newModelO := resO.(Model)
+	if newModelO.state != stateConfirm {
+		t.Errorf("expected state to be stateConfirm, got %v", newModelO.state)
+	}
+	if newModelO.confirm == nil || newModelO.confirm.label != "Reopen Issue #55?" {
+		t.Errorf("expected confirmation prompt for Reopen Issue #55, got %v", newModelO.confirm)
+	}
+}
+
+func TestCloseAndReopenIssueKeyFromList(t *testing.T) {
+	InitTheme("catppuccin")
+
+	m := Model{
+		cfg: &config.Config{
+			Servers: []config.Server{
+				{Name: "GitLab", URL: "https://gitlab.com"},
+			},
+		},
+		tab:     tabIssues,
+		state:   stateMain,
+		project: &gitlab.ProjectInfo{ID: 1},
+		issues: []*gitlab.IssueInfo{
+			{
+				IID:   88,
+				Title: "Opened List Issue",
+				State: "opened",
+			},
+		},
+		issueCursor: 0,
+		width:       80,
+		height:      24,
+	}
+
+	footer := m.viewFooter()
+	if !strings.Contains(footer, "x") || !strings.Contains(footer, "close") {
+		t.Errorf("expected list footer to contain 'x close', got: %s", footer)
+	}
+
+	// Update with key "x"
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}}
+	res, _ := m.Update(msg)
+
+	newModel := res.(Model)
+	if newModel.state != stateConfirm {
+		t.Errorf("expected state to be stateConfirm, got %v", newModel.state)
+	}
+	if newModel.confirm == nil || newModel.confirm.label != "Close Issue #88?" {
+		t.Errorf("expected confirmation prompt for Close Issue #88, got %v", newModel.confirm)
+	}
+
+	// Change state to closed and test 'O'
+	m.issues[0].State = "closed"
+	footer = m.viewFooter()
+	if !strings.Contains(footer, "O") || !strings.Contains(footer, "reopen") {
+		t.Errorf("expected list footer to contain 'O reopen', got: %s", footer)
+	}
+
+	msgO := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'O'}}
+	resO, _ := m.Update(msgO)
+
+	newModelO := resO.(Model)
+	if newModelO.state != stateConfirm {
+		t.Errorf("expected state to be stateConfirm, got %v", newModelO.state)
+	}
+	if newModelO.confirm == nil || newModelO.confirm.label != "Reopen Issue #88?" {
+		t.Errorf("expected confirmation prompt for Reopen Issue #88, got %v", newModelO.confirm)
+	}
+}

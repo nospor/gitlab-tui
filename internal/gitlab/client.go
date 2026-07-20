@@ -1041,6 +1041,24 @@ func (c *Client) GetIssue(projectID, issueIID int) (*IssueInfo, error) {
 	return info, nil
 }
 
+// CloseIssue closes an issue.
+func (c *Client) CloseIssue(projectID, issueIID int) error {
+	state := "close"
+	_, _, err := c.raw.Issues.UpdateIssue(projectID, int64(issueIID), &gl.UpdateIssueOptions{
+		StateEvent: &state,
+	})
+	return err
+}
+
+// ReopenIssue reopens an issue.
+func (c *Client) ReopenIssue(projectID, issueIID int) error {
+	state := "reopen"
+	_, _, err := c.raw.Issues.UpdateIssue(projectID, int64(issueIID), &gl.UpdateIssueOptions{
+		StateEvent: &state,
+	})
+	return err
+}
+
 // IssueDiscussion represents a GitLab discussion thread on an issue.
 type IssueDiscussion struct {
 	ID             string

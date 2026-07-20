@@ -9,7 +9,7 @@ Built with [BubbleTea](https://github.com/charmbracelet/bubbletea) and the offic
 - 🔀 **Merge Requests** — list, filter by state (open/merged/closed), view details, approve, merge, close, edit existing MRs, and **create new MRs** via an interactive wizard
 - 🌿 **Branches** — list branches, delete branch (with confirmation), create MR directly from a branch, view commits history, and compare branches (showing commit differences and changed files diff)
 - 🚀 **Pipelines** — list, view details (with dual-pane layout showing jobs and statuses), automatic background refresh (every 5s) for active pipelines, retry/cancel pipelines, restart individual jobs, scroll/search job trace logs, and open traces directly in your external editor
-- 🐛 **Issues** — list, view details with discussion threads & comments, post new comments, vote up/down, select/edit/delete comments
+- 🐛 **Issues** — list, filter by state (open/closed/all), view details with discussion threads & comments, close (`x`), reopen (`O`), post new comments, vote up/down, select/edit/delete comments
 - 📁 **Projects** — browse and switch projects on the current server
 - 🔌 **Multiple servers** — configure several GitLab instances, switch between them
 - 🧠 **Auto-detection** — detects server and project from the current directory's `git remote`
@@ -133,8 +133,8 @@ Both SSH and HTTPS remotes are supported:
 | `C`               | Compare branch with another (Branches tab only)             |
 | `d`               | Delete branch (Branches tab only)                           |
 | `e`               | Edit selected MR (MR tab only)                              |
-| `x`               | Close selected MR (MR tab only)                             |
-| `O`               | Reopen selected MR (MR tab only)                            |
+| `x`               | Close selected MR or Issue                                  |
+| `O`               | Reopen selected MR or Issue                                 |
 | `r`               | Refresh current tab                                         |
 | `n` / `p`         | Next / previous page                                        |
 | `P`               | Switch project                                              |
@@ -242,6 +242,8 @@ Pick the destination branch. The source branch is excluded from the list. The re
 | `r`       | Reply to selected comment thread                                   |
 | `e`       | Edit selected comment                                              |
 | `d`       | Delete selected comment                                            |
+| `x`       | Close Issue                                                        |
+| `O`       | Reopen Issue (closed issues)                                       |
 | `+` / `-` | Vote up / down                                                     |
 | `o`       | Open link selector                                                 |
 | `Esc`     | Clear comment selection (if active) or back to list                |

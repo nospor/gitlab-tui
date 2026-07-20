@@ -567,6 +567,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.pipelineCursor < 0 {
 			m.pipelineCursor = 0
 		}
+		if m.state == stateLoading {
+			m.state = stateMain
+		}
 		return m, nil
 
 	case pipelineJobsLoadedMsg:
@@ -641,6 +644,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.issueCursor < 0 {
 			m.issueCursor = 0
 		}
+		if m.state == stateLoading {
+			m.state = stateMain
+		}
 		return m, nil
 
 	case projectLoadedMsg:
@@ -651,6 +657,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.projectCursor < 0 {
 			m.projectCursor = 0
+		}
+		if m.state == stateLoading {
+			m.state = stateMain
 		}
 		return m, nil
 
@@ -925,10 +934,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.branchCommitDiffLoading = false
 			m.branchCommitDiffSHA = ""
 
-			if len(m.mrs) == 0 {
+			if m.tab == tabMRs && len(m.mrs) == 0 {
 				m.state = stateLoading
 				m.loadMsg = "Loading merge requests..."
 				return m, m.cmdLoadMRs()
+			}
+			if m.tab == tabIssues && len(m.issues) == 0 {
+				m.state = stateLoading
+				m.loadMsg = "Loading issues..."
+				return m, m.cmdLoadIssues()
 			}
 		case stateServerSelect:
 			m.state = m.prevState
@@ -1080,6 +1094,12 @@ func (m Model) handleMainKey(key string) (tea.Model, tea.Cmd) {
 				return m.promptConfirm("Close MR", fmt.Sprintf("Close MR !%d?", mr.IID),
 					m.cmdCloseMR(mr.IID))
 			}
+		} else if m.tab == tabIssues && m.project != nil && m.issueCursor < len(m.issues) {
+			iss := m.issues[m.issueCursor]
+			if iss.State == "opened" {
+				return m.promptConfirm("Close Issue", fmt.Sprintf("Close Issue #%d?", iss.IID),
+					m.cmdCloseIssue(iss.IID))
+			}
 		}
 	case "O":
 		if m.tab == tabMRs && m.project != nil && m.mrCursor < len(m.mrs) {
@@ -1087,6 +1107,12 @@ func (m Model) handleMainKey(key string) (tea.Model, tea.Cmd) {
 			if mr.State == "closed" {
 				return m.promptConfirm("Reopen MR", fmt.Sprintf("Reopen MR !%d?", mr.IID),
 					m.cmdReopenMR(mr.IID))
+			}
+		} else if m.tab == tabIssues && m.project != nil && m.issueCursor < len(m.issues) {
+			iss := m.issues[m.issueCursor]
+			if iss.State == "closed" {
+				return m.promptConfirm("Reopen Issue", fmt.Sprintf("Reopen Issue #%d?", iss.IID),
+					m.cmdReopenIssue(iss.IID))
 			}
 		}
 	case "s":
@@ -1507,6 +1533,16 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 				m.linkCursor = 0
 				m.prevState = m.state
 				m.state = stateLinkSelect
+			}
+		case "x":
+			if m.issueDetail != nil && m.issueDetail.State == "opened" {
+				return m.promptConfirm("Close Issue", fmt.Sprintf("Close Issue #%d?", m.issueDetail.IID),
+					m.cmdCloseIssue(m.issueDetail.IID))
+			}
+		case "O":
+			if m.issueDetail != nil && m.issueDetail.State == "closed" {
+				return m.promptConfirm("Reopen Issue", fmt.Sprintf("Reopen Issue #%d?", m.issueDetail.IID),
+					m.cmdReopenIssue(m.issueDetail.IID))
 			}
 		}
 	case tabBranches:
@@ -2828,6 +2864,26 @@ func (m Model) cmdReopenMR(iid int) tea.Cmd {
 			return errMsg{err}
 		}
 		return actionDoneMsg{"MR reopened!"}
+	}
+}
+
+func (m Model) cmdCloseIssue(iid int) tea.Cmd {
+	pid := m.project.ID
+	return func() tea.Msg {
+		if err := m.client.CloseIssue(pid, iid); err != nil {
+			return errMsg{err}
+		}
+		return actionDoneMsg{"Issue closed!"}
+	}
+}
+
+func (m Model) cmdReopenIssue(iid int) tea.Cmd {
+	pid := m.project.ID
+	return func() tea.Msg {
+		if err := m.client.ReopenIssue(pid, iid); err != nil {
+			return errMsg{err}
+		}
+		return actionDoneMsg{"Issue reopened!"}
 	}
 }
 
@@ -5083,6 +5139,14 @@ func (m Model) viewFooter() string {
 			stateStr = string(gitlab.IssueStateOpened)
 		}
 		hints = append(hints, keyHint("s", "state:"+stateStr))
+		if m.project != nil && m.issueCursor < len(m.issues) {
+			iss := m.issues[m.issueCursor]
+			if iss.State == "opened" {
+				hints = append(hints, keyHint("x", "close"))
+			} else if iss.State == "closed" {
+				hints = append(hints, keyHint("O", "reopen"))
+			}
+		}
 	}
 
 	if m.tab == tabBranches {
@@ -5236,6 +5300,11 @@ func (m Model) viewDetailFooter() string {
 		}
 		if m.commentCursor >= 0 {
 			hints = append(hints, keyHint("r", "reply"), keyHint("e", "edit comment"), keyHint("d", "delete comment"))
+		}
+		if m.issueDetail != nil && m.issueDetail.State == "opened" {
+			hints = append(hints, keyHint("x", "close"))
+		} else if m.issueDetail != nil && m.issueDetail.State == "closed" {
+			hints = append(hints, keyHint("O", "reopen"))
 		}
 		hints = append(hints,
 			keyHint("+", "vote up"),
