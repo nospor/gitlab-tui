@@ -1,4 +1,18 @@
 
+## [0.6.7] - 2026-07-20
+
+### Features
+
+- Add Tags tab with full CRUD and detail view ([7d61f97](https://github.com/nospor/gitlab-tui/commit/7d61f9736268a8e0388826865d7ee1cc9d15e00a))
+
+### Bug Fixes
+
+- *(tui)* Parse and format system note markdown and diffs with ANSI styling ([2a17463](https://github.com/nospor/gitlab-tui/commit/2a17463c996f85812702df7e1fd220740563fc86))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.6.6 [skip ci] ([c1bff0b](https://github.com/nospor/gitlab-tui/commit/c1bff0bbc2cfdc59dbbe800e9460c7baba3da6be))
+
 ## [0.6.6] - 2026-07-20
 
 ### Features
