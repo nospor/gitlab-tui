@@ -243,6 +243,7 @@ type Model struct {
 	issuePage               int
 	issueTotalPage          int
 	issueCursor             int
+	issueState              gitlab.IssueState
 	issueDetail             *gitlab.IssueInfo
 	issueDiscussions        []*gitlab.IssueDiscussion
 	issueDetailScrollOffset int
@@ -384,6 +385,7 @@ func New(cfg *config.Config, serverIdx int, client *gitlab.Client, project *gitl
 		tab:               tabMRs,
 		spin:              sp,
 		mrState:           gitlab.MRStateOpened,
+		issueState:        gitlab.IssueStateOpened,
 		mrPage:            1,
 		pipelinePage:      1,
 		issuePage:         1,
@@ -1088,7 +1090,7 @@ func (m Model) handleMainKey(key string) (tea.Model, tea.Cmd) {
 			}
 		}
 	case "s":
-		// Switch MR state filter
+		// Switch MR or Issue state filter
 		if m.tab == tabMRs {
 			switch m.mrState {
 			case gitlab.MRStateOpened:
@@ -1103,6 +1105,18 @@ func (m Model) handleMainKey(key string) (tea.Model, tea.Cmd) {
 			m.mrPage = 1
 			m.mrCursor = 0
 			return m, m.cmdLoadMRs()
+		} else if m.tab == tabIssues {
+			switch m.issueState {
+			case gitlab.IssueStateOpened:
+				m.issueState = gitlab.IssueStateClosed
+			case gitlab.IssueStateClosed:
+				m.issueState = gitlab.IssueStateAll
+			default:
+				m.issueState = gitlab.IssueStateOpened
+			}
+			m.issuePage = 1
+			m.issueCursor = 0
+			return m, m.cmdLoadIssues()
 		}
 	case "S":
 		// Switch server
@@ -2751,9 +2765,13 @@ func (m Model) cmdLoadIssues() tea.Cmd {
 		return nil
 	}
 	pid := m.project.ID
+	state := m.issueState
+	if state == "" {
+		state = gitlab.IssueStateOpened
+	}
 	page := m.issuePage
 	return func() tea.Msg {
-		items, total, err := m.client.ListIssues(pid, gitlab.IssueStateOpened, page)
+		items, total, err := m.client.ListIssues(pid, state, page)
 		if err != nil {
 			return errMsg{err}
 		}
@@ -3538,7 +3556,11 @@ func (m Model) viewPipelineList() string {
 
 func (m Model) viewIssueList() string {
 	if len(m.issues) == 0 {
-		return dimStyle.Padding(2).Render("No issues found.")
+		stateStr := string(m.issueState)
+		if stateStr == "" {
+			stateStr = string(gitlab.IssueStateOpened)
+		}
+		return dimStyle.Padding(2).Render("No issues found for state: " + stateStr)
 	}
 
 	var rows []string
@@ -5053,6 +5075,14 @@ func (m Model) viewFooter() string {
 				}
 			}
 		}
+	}
+
+	if m.tab == tabIssues {
+		stateStr := string(m.issueState)
+		if stateStr == "" {
+			stateStr = string(gitlab.IssueStateOpened)
+		}
+		hints = append(hints, keyHint("s", "state:"+stateStr))
 	}
 
 	if m.tab == tabBranches {

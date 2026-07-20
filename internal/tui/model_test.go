@@ -208,4 +208,55 @@ func TestReopenMRKeyFromList(t *testing.T) {
 	_ = newModel.View()
 }
 
+func TestIssueStateToggleKey(t *testing.T) {
+	InitTheme("catppuccin")
 
+	m := Model{
+		cfg: &config.Config{
+			Servers: []config.Server{
+				{Name: "GitLab", URL: "https://gitlab.com"},
+			},
+		},
+		tab:        tabIssues,
+		state:      stateMain,
+		project:    &gitlab.ProjectInfo{ID: 1},
+		issueState: gitlab.IssueStateOpened,
+		width:      80,
+		height:     24,
+	}
+
+	footer := m.viewFooter()
+	if !strings.Contains(footer, "s") || !strings.Contains(footer, "state:opened") {
+		t.Errorf("expected list footer to contain 's state:opened', got: %s", footer)
+	}
+
+	// Press 's': opened -> closed
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}}
+	res, _ := m.Update(msg)
+	m = res.(Model)
+	if m.issueState != gitlab.IssueStateClosed {
+		t.Errorf("expected issueState to be closed, got %v", m.issueState)
+	}
+	footer = m.viewFooter()
+	if !strings.Contains(footer, "state:closed") {
+		t.Errorf("expected list footer to contain 'state:closed', got: %s", footer)
+	}
+
+	// Press 's': closed -> all
+	res, _ = m.Update(msg)
+	m = res.(Model)
+	if m.issueState != gitlab.IssueStateAll {
+		t.Errorf("expected issueState to be all, got %v", m.issueState)
+	}
+	footer = m.viewFooter()
+	if !strings.Contains(footer, "state:all") {
+		t.Errorf("expected list footer to contain 'state:all', got: %s", footer)
+	}
+
+	// Press 's': all -> opened
+	res, _ = m.Update(msg)
+	m = res.(Model)
+	if m.issueState != gitlab.IssueStateOpened {
+		t.Errorf("expected issueState to be opened, got %v", m.issueState)
+	}
+}
