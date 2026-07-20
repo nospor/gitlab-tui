@@ -1589,4 +1589,123 @@ func (c *Client) GetCommitDiffs(projectID int, sha string) ([]*DiffFile, error) 
 	return result, nil
 }
 
+// ─── Tags ────────────────────────────────────────────────────────────────────
 
+// TagInfo represents a simplified tag structure.
+type TagInfo struct {
+	Name        string
+	Target      string
+	Message     string
+	CommitTitle string
+	CommitID    string
+	ShortID     string
+	AuthorName  string
+	Date        string
+	ReleaseDesc string
+}
+
+// ListTags lists repository tags for a project.
+func (c *Client) ListTags(projectID int) ([]*TagInfo, error) {
+	var tags []*TagInfo
+	page := int64(1)
+	for {
+		opts := &gl.ListTagsOptions{
+			ListOptions: gl.ListOptions{
+				Page:    page,
+				PerPage: 100,
+			},
+		}
+		res, resp, err := c.raw.Tags.ListTags(projectID, opts)
+		if err != nil {
+			return nil, fmt.Errorf("listing tags: %w", err)
+		}
+		for _, t := range res {
+			ti := &TagInfo{
+				Name:    t.Name,
+				Target:  t.Target,
+				Message: t.Message,
+			}
+			if t.Commit != nil {
+				ti.CommitTitle = t.Commit.Title
+				ti.CommitID = t.Commit.ID
+				ti.ShortID = t.Commit.ShortID
+				ti.AuthorName = t.Commit.AuthorName
+				if t.Commit.CommittedDate != nil {
+					ti.Date = t.Commit.CommittedDate.Format("2006-01-02 15:04")
+				}
+			}
+			if t.Release != nil {
+				ti.ReleaseDesc = t.Release.Description
+			}
+			tags = append(tags, ti)
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		page = resp.NextPage
+	}
+	return tags, nil
+}
+
+// CreateTag creates a new tag in the repository.
+func (c *Client) CreateTag(projectID int, name, ref, message string) (*TagInfo, error) {
+	opts := &gl.CreateTagOptions{
+		TagName: gl.Ptr(name),
+		Ref:     gl.Ptr(ref),
+	}
+	if message != "" {
+		opts.Message = gl.Ptr(message)
+	}
+	t, _, err := c.raw.Tags.CreateTag(projectID, opts)
+	if err != nil {
+		return nil, fmt.Errorf("creating tag %q from %q: %w", name, ref, err)
+	}
+	ti := &TagInfo{
+		Name:    t.Name,
+		Target:  t.Target,
+		Message: t.Message,
+	}
+	if t.Commit != nil {
+		ti.CommitTitle = t.Commit.Title
+		ti.CommitID = t.Commit.ID
+		ti.ShortID = t.Commit.ShortID
+		ti.AuthorName = t.Commit.AuthorName
+		if t.Commit.CommittedDate != nil {
+			ti.Date = t.Commit.CommittedDate.Format("2006-01-02 15:04")
+		}
+	}
+	if t.Release != nil {
+		ti.ReleaseDesc = t.Release.Description
+	}
+	return ti, nil
+}
+
+// DeleteTag deletes a tag in the repository.
+func (c *Client) DeleteTag(projectID int, tag string) error {
+	_, err := c.raw.Tags.DeleteTag(projectID, tag)
+	if err != nil {
+		return fmt.Errorf("deleting tag %q: %w", tag, err)
+	}
+	return nil
+}
+
+// UpdateTagRelease creates or updates the GitLab Release description for a tag.
+// If the tag already has a release, it is updated; otherwise a new release is created.
+func (c *Client) UpdateTagRelease(projectID int, tagName, description string) error {
+	// Try updating first
+	_, _, err := c.raw.Releases.UpdateRelease(projectID, tagName, &gl.UpdateReleaseOptions{
+		Description: gl.Ptr(description),
+	})
+	if err == nil {
+		return nil
+	}
+	// If update failed (release does not exist), create it
+	_, _, err2 := c.raw.Releases.CreateRelease(projectID, &gl.CreateReleaseOptions{
+		TagName:     gl.Ptr(tagName),
+		Description: gl.Ptr(description),
+	})
+	if err2 != nil {
+		return fmt.Errorf("updating release for tag %q: %w", tagName, err2)
+	}
+	return nil
+}

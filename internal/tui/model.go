@@ -44,6 +44,7 @@ type tabID int
 const (
 	tabMRs tabID = iota
 	tabBranches
+	tabTags
 	tabPipelines
 	tabIssues
 	tabProjects
@@ -53,9 +54,10 @@ const (
 var tabLabels = [tabCount]string{
 	"  1: Merge Requests",
 	"  2: Branches",
-	"  3: Pipelines",
-	"  4: Issues",
-	"  5: Projects",
+	"  3: Tags",
+	"  4: Pipelines",
+	"  5: Issues",
+	"  6: Projects",
 }
 
 // ─── App state ────────────────────────────────────────────────────────────────
@@ -78,6 +80,8 @@ const (
 	statePipelineSelect
 	stateCompareBranchSelect
 	stateCreateIssueBranch
+	stateCreateTag
+	stateEditTag
 )
 
 // ─── Messages ─────────────────────────────────────────────────────────────────
@@ -150,6 +154,13 @@ type (
 	commitDiffsLoadedMsg struct {
 		sha   string
 		files []*gitlab.DiffFile
+	}
+	tagsLoadedMsg struct {
+		tags []*gitlab.TagInfo
+	}
+	tagCommitsLoadedMsg struct {
+		tag     string
+		commits []*gitlab.CommitInfo
 	}
 )
 
@@ -326,6 +337,30 @@ type Model struct {
 	createIssueBranchName  textinput.Model
 	createIssueBranchRef   textinput.Model
 	createIssueBranchField int
+
+	// Tags view
+	tags                         []*gitlab.TagInfo
+	tagCursor                    int
+	tagDetailName                string
+	tagCommits                   []*gitlab.CommitInfo
+	tagCommitCursor              int
+	tagCommitDiffFiles           []*gitlab.DiffFile
+	tagCommitDiffFileIdx         int
+	tagCommitDiffLineCursor      int
+	tagCommitDiffScrollOffset    int
+	tagCommitDiffPanelOpen       bool
+	tagCommitDiffLoading         bool
+	tagCommitDiffSHA             string
+
+	// Create Tag form
+	createTagName         textinput.Model
+	createTagBranchCursor int
+	createTagMessage      textarea.Model
+	createTagField        int
+
+	// Edit Tag form
+	editTagName        string
+	editTagDescription textarea.Model
 }
 
 const (
@@ -337,6 +372,11 @@ const (
 	createIssueBranchFieldName  = 0
 	createIssueBranchFieldRef   = 1
 	createIssueBranchFieldCount = 2
+
+	createTagNameField    = 0
+	createTagRefField     = 1
+	createTagMessageField = 2
+	createTagFieldCount   = 3
 )
 
 func (m Model) currentFormIssueTypes() []string {
@@ -450,33 +490,79 @@ func New(cfg *config.Config, serverIdx int, client *gitlab.Client, project *gitl
 	bnref.CharLimit = 255
 	bnref.Width = 58
 
+	// Create Tag text inputs
+	ctname := textinput.New()
+	ctname.Placeholder = "Enter tag name (e.g. v1.0.0)..."
+	ctname.CharLimit = 255
+	ctname.Width = 58
+
+	ctmsg := textarea.New()
+	ctmsg.Placeholder = "Enter description / release notes (optional)..."
+	ctmsg.SetWidth(58)
+	ctmsg.SetHeight(5)
+	ctmsg.CharLimit = 5000
+	ctmsg.Prompt = ""
+	ctmsg.ShowLineNumbers = false
+	ctmsg.FocusedStyle.Base = ctmsg.FocusedStyle.Base.Background(colorBgPanel)
+	ctmsg.FocusedStyle.Text = ctmsg.FocusedStyle.Text.Background(colorBgPanel)
+	ctmsg.FocusedStyle.Placeholder = ctmsg.FocusedStyle.Placeholder.Background(colorBgPanel)
+	ctmsg.FocusedStyle.CursorLine = ctmsg.FocusedStyle.CursorLine.Background(colorBgPanel)
+	ctmsg.FocusedStyle.EndOfBuffer = ctmsg.FocusedStyle.EndOfBuffer.Background(colorBgPanel)
+	ctmsg.BlurredStyle.Base = ctmsg.BlurredStyle.Base.Background(colorBgPanel)
+	ctmsg.BlurredStyle.Text = ctmsg.BlurredStyle.Text.Background(colorBgPanel)
+	ctmsg.BlurredStyle.Placeholder = ctmsg.BlurredStyle.Placeholder.Background(colorBgPanel)
+	ctmsg.BlurredStyle.CursorLine = ctmsg.BlurredStyle.CursorLine.Background(colorBgPanel)
+	ctmsg.BlurredStyle.EndOfBuffer = ctmsg.BlurredStyle.EndOfBuffer.Background(colorBgPanel)
+
+	// Edit Tag description textarea
+	etdesc := textarea.New()
+	etdesc.Placeholder = "Enter release description / notes (optional)..."
+	etdesc.SetWidth(58)
+	etdesc.SetHeight(6)
+	etdesc.CharLimit = 5000
+	etdesc.Prompt = ""
+	etdesc.ShowLineNumbers = false
+	etdesc.FocusedStyle.Base = etdesc.FocusedStyle.Base.Background(colorBgPanel)
+	etdesc.FocusedStyle.Text = etdesc.FocusedStyle.Text.Background(colorBgPanel)
+	etdesc.FocusedStyle.Placeholder = etdesc.FocusedStyle.Placeholder.Background(colorBgPanel)
+	etdesc.FocusedStyle.CursorLine = etdesc.FocusedStyle.CursorLine.Background(colorBgPanel)
+	etdesc.FocusedStyle.EndOfBuffer = etdesc.FocusedStyle.EndOfBuffer.Background(colorBgPanel)
+	etdesc.BlurredStyle.Base = etdesc.BlurredStyle.Base.Background(colorBgPanel)
+	etdesc.BlurredStyle.Text = etdesc.BlurredStyle.Text.Background(colorBgPanel)
+	etdesc.BlurredStyle.Placeholder = etdesc.BlurredStyle.Placeholder.Background(colorBgPanel)
+	etdesc.BlurredStyle.CursorLine = etdesc.BlurredStyle.CursorLine.Background(colorBgPanel)
+	etdesc.BlurredStyle.EndOfBuffer = etdesc.BlurredStyle.EndOfBuffer.Background(colorBgPanel)
+
 	m := Model{
-		cfg:                  cfg,
-		serverIdx:            serverIdx,
-		client:               client,
-		project:              project,
-		startupWarn:          startupWarn,
-		initialMRIID:         initialMRIID,
-		initialPipelineID:    initialPipelineID,
-		initialJobID:         initialJobID,
-		state:                stateLoading,
-		loadMsg:              "Connecting to GitLab...",
-		tab:                  tabMRs,
-		spin:                 sp,
-		mrState:              gitlab.MRStateOpened,
-		issueState:           gitlab.IssueStateOpened,
-		mrPage:               1,
-		pipelinePage:         1,
-		issuePage:            1,
-		projectPage:          1,
-		projectSearch:        ti,
-		commentInput:         ci,
-		createMRTitle:        mrti,
+		cfg:                   cfg,
+		serverIdx:             serverIdx,
+		client:                client,
+		project:               project,
+		startupWarn:           startupWarn,
+		initialMRIID:          initialMRIID,
+		initialPipelineID:     initialPipelineID,
+		initialJobID:          initialJobID,
+		state:                 stateLoading,
+		loadMsg:               "Connecting to GitLab...",
+		tab:                   tabMRs,
+		spin:                  sp,
+		mrState:               gitlab.MRStateOpened,
+		issueState:            gitlab.IssueStateOpened,
+		mrPage:                1,
+		pipelinePage:          1,
+		issuePage:             1,
+		projectPage:           1,
+		projectSearch:         ti,
+		commentInput:          ci,
+		createMRTitle:         mrti,
 		createMRDescription:   mrdi,
-		issueFormTitle:       iti,
-		issueFormDescription: idi,
+		issueFormTitle:        iti,
+		issueFormDescription:  idi,
 		createIssueBranchName: bnti,
 		createIssueBranchRef:  bnref,
+		createTagName:         ctname,
+		createTagMessage:      ctmsg,
+		editTagDescription:    etdesc,
 	}
 	return m
 }
@@ -797,6 +883,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = stateMain
 			m.branchCursor = 0
 		}
+		if m.state == stateCreateTag && m.createTagBranchCursor == 0 && m.project != nil {
+			for i, b := range m.branches {
+				if b == m.project.DefaultBranch {
+					m.createTagBranchCursor = i
+					break
+				}
+			}
+		}
 		// If only one source branch candidate was loaded, auto-select it
 		if m.state == stateCreateMR && m.createMRStep == 0 && len(m.createMRBranches) > 0 {
 			// pre-position cursor on a branch that has no open MR (best effort; just stay at 0)
@@ -830,23 +924,55 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case commitDiffsLoadedMsg:
 		m.branchCommitDiffLoading = false
+		m.tagCommitDiffLoading = false
 		var currentSHA string
-		if m.branchDetailView == branchViewCompare {
-			if m.branchCompare != nil && len(m.branchCompare.Commits) > 0 && m.branchCompareCursor < len(m.branchCompare.Commits) {
-				currentSHA = m.branchCompare.Commits[m.branchCompareCursor].ID
+		if m.tab == tabTags {
+			if len(m.tagCommits) > 0 && m.tagCommitCursor < len(m.tagCommits) {
+				currentSHA = m.tagCommits[m.tagCommitCursor].ID
+			}
+			if currentSHA != "" && msg.sha == currentSHA {
+				m.tagCommitDiffFiles = msg.files
+				m.tagCommitDiffSHA = msg.sha
+				m.tagCommitDiffFileIdx = 0
+				m.tagCommitDiffLineCursor = 0
+				m.tagCommitDiffScrollOffset = 0
 			}
 		} else {
-			if len(m.branchCommits) > 0 && m.branchCommitCursor < len(m.branchCommits) {
-				currentSHA = m.branchCommits[m.branchCommitCursor].ID
+			if m.branchDetailView == branchViewCompare {
+				if m.branchCompare != nil && len(m.branchCompare.Commits) > 0 && m.branchCompareCursor < len(m.branchCompare.Commits) {
+					currentSHA = m.branchCompare.Commits[m.branchCompareCursor].ID
+				}
+			} else {
+				if len(m.branchCommits) > 0 && m.branchCommitCursor < len(m.branchCommits) {
+					currentSHA = m.branchCommits[m.branchCommitCursor].ID
+				}
+			}
+			if currentSHA != "" && msg.sha == currentSHA {
+				m.branchCommitDiffFiles = msg.files
+				m.branchCommitDiffSHA = msg.sha
+				m.branchCommitDiffFileIdx = 0
+				m.branchCommitDiffLineCursor = 0
+				m.branchCommitDiffScrollOffset = 0
 			}
 		}
-		if currentSHA != "" && msg.sha == currentSHA {
-			m.branchCommitDiffFiles = msg.files
-			m.branchCommitDiffSHA = msg.sha
-			m.branchCommitDiffFileIdx = 0
-			m.branchCommitDiffLineCursor = 0
-			m.branchCommitDiffScrollOffset = 0
+		return m, nil
+
+	case tagsLoadedMsg:
+		m.tags = msg.tags
+		if m.state == stateLoading && m.tab == tabTags {
+			m.state = stateMain
+			m.tagCursor = 0
 		}
+		return m, nil
+
+	case tagCommitsLoadedMsg:
+		m.tagCommits = msg.commits
+		m.tagDetailName = msg.tag
+		m.tagCommitCursor = 0
+		m.tagCommitDiffPanelOpen = false
+		m.tagCommitDiffFiles = nil
+		m.tagCommitDiffSHA = ""
+		m.state = stateDetail
 		return m, nil
 
 
@@ -897,6 +1023,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.state == stateCreateIssueBranch {
 			return m.handleCreateIssueBranchKey(msg)
+		}
+		if m.state == stateCreateTag {
+			return m.handleCreateTagKey(msg)
+		}
+		if m.state == stateEditTag {
+			return m.handleEditTagKey(msg)
 		}
 		if m.state == stateMain && m.tab == tabProjects && m.projectSearch.Focused() {
 			key := msg.String()
@@ -972,6 +1104,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case stateDetail:
 			if m.tab == tabBranches && (m.branchDetailView == branchViewCommits || m.branchDetailView == branchViewCompare) && m.branchCommitDiffPanelOpen {
 				m.branchCommitDiffPanelOpen = false
+				return m, nil
+			}
+			if m.tab == tabTags && m.tagCommitDiffPanelOpen {
+				m.tagCommitDiffPanelOpen = false
 				return m, nil
 			}
 			if m.commentCursor >= 0 {
@@ -1081,6 +1217,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleCompareBranchSelectKey(key)
 	case stateCreateIssueBranch:
 		return m.handleCreateIssueBranchKey(msg)
+	case stateCreateTag:
+		return m.handleCreateTagKey(msg)
 
 	case stateServerSelect:
 		return m.handleServerSelectKey(key)
@@ -1135,18 +1273,23 @@ func (m Model) handleMainKey(key string) (tea.Model, tea.Cmd) {
 		m.branchCursor = 0
 		return m, m.cmdLoadBranches()
 	case "3":
+		m.tab = tabTags
+		m.projectSearch.Blur()
+		m.tagCursor = 0
+		return m, m.cmdLoadTags()
+	case "4":
 		m.tab = tabPipelines
 		m.projectSearch.Blur()
 		m.pipelineCursor = 0
 		m.pipelinePage = 1
 		return m, m.cmdLoadPipelines()
-	case "4":
+	case "5":
 		m.tab = tabIssues
 		m.projectSearch.Blur()
 		m.issueCursor = 0
 		m.issuePage = 1
 		return m, m.cmdLoadIssues()
-	case "5":
+	case "6":
 		m.tab = tabProjects
 		m.projectSearch.Focus()
 		m.projectCursor = 0
@@ -1176,6 +1319,8 @@ func (m Model) handleMainKey(key string) (tea.Model, tea.Cmd) {
 				return m.startCreateIssue()
 			} else if m.tab == tabBranches && m.branchCursor < len(m.branches) {
 				return m.startCreateMRFromBranch(m.branches[m.branchCursor])
+			} else if m.tab == tabTags {
+				return m.startCreateTag()
 			}
 		}
 	case "C":
@@ -1189,6 +1334,9 @@ func (m Model) handleMainKey(key string) (tea.Model, tea.Cmd) {
 		if m.tab == tabBranches && m.project != nil && m.branchCursor < len(m.branches) {
 			branch := m.branches[m.branchCursor]
 			return m.promptConfirm("Delete Branch", fmt.Sprintf("Are you sure you want to delete branch '%s'?", branch), m.cmdDeleteBranch(branch))
+		} else if m.tab == tabTags && m.project != nil && m.tagCursor < len(m.tags) {
+			tag := m.tags[m.tagCursor]
+			return m.promptConfirm("Delete Tag", fmt.Sprintf("Are you sure you want to delete tag '%s'?", tag.Name), m.cmdDeleteTag(tag.Name))
 		}
 	case "b":
 		if m.tab == tabIssues && m.project != nil && m.issueCursor < len(m.issues) {
@@ -1200,6 +1348,8 @@ func (m Model) handleMainKey(key string) (tea.Model, tea.Cmd) {
 				return m.startEditMR()
 			} else if m.tab == tabIssues {
 				return m.startEditIssue()
+			} else if m.tab == tabTags && m.tagCursor < len(m.tags) {
+				return m.startEditTag(m.tags[m.tagCursor])
 			}
 		}
 	case "x":
@@ -1791,6 +1941,75 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 						}
 					}
 					return m, nil
+				}
+			}
+		}
+	case tabTags:
+		if m.tagCommitDiffPanelOpen {
+			switch key {
+			case "tab":
+				m.tagCommitDiffPanelOpen = false
+				return m, nil
+			case "j", "down":
+				m.tagCommitDiffLineCursorDown()
+				m.updateTagCommitDiffScroll()
+				return m, nil
+			case "k", "up":
+				m.tagCommitDiffLineCursorUp()
+				m.updateTagCommitDiffScroll()
+				return m, nil
+			case "J":
+				m.tagCommitDiffNextHunk()
+				m.updateTagCommitDiffScroll()
+				return m, nil
+			case "K":
+				m.tagCommitDiffPrevHunk()
+				m.updateTagCommitDiffScroll()
+				return m, nil
+			case "n":
+				if m.tagCommitDiffFileIdx < len(m.tagCommitDiffFiles)-1 {
+					m.tagCommitDiffFileIdx++
+					m.tagCommitDiffLineCursor = 0
+					m.tagCommitDiffScrollOffset = 0
+					m.updateTagCommitDiffScroll()
+				}
+				return m, nil
+			case "p":
+				if m.tagCommitDiffFileIdx > 0 {
+					m.tagCommitDiffFileIdx--
+					m.tagCommitDiffLineCursor = 0
+					m.tagCommitDiffScrollOffset = 0
+					m.updateTagCommitDiffScroll()
+				}
+				return m, nil
+			}
+		} else {
+			switch key {
+			case "j", "down":
+				if m.tagCommitCursor < len(m.tagCommits)-1 {
+					m.tagCommitCursor++
+				}
+			case "k", "up":
+				if m.tagCommitCursor > 0 {
+					m.tagCommitCursor--
+				}
+			case "tab":
+				m.tagCommitDiffPanelOpen = true
+				if len(m.tagCommits) > 0 && m.tagCommitCursor < len(m.tagCommits) {
+					c := m.tagCommits[m.tagCommitCursor]
+					if m.tagCommitDiffSHA != c.ID {
+						m.tagCommitDiffLoading = true
+						m.tagCommitDiffFiles = nil
+						return m, m.cmdLoadCommitDiff(c.ID)
+					}
+				}
+				return m, nil
+			case "e":
+				// Find the tag by name in the list
+				for _, t := range m.tags {
+					if t.Name == m.tagDetailName {
+						return m.startEditTag(t)
+					}
 				}
 			}
 		}
@@ -2959,6 +3178,8 @@ func (m *Model) listLen() int {
 		return len(m.mrs)
 	case tabBranches:
 		return len(m.branches)
+	case tabTags:
+		return len(m.tags)
 	case tabPipelines:
 		return len(m.pipelines)
 	case tabIssues:
@@ -2975,6 +3196,8 @@ func (m *Model) cursor() int {
 		return m.mrCursor
 	case tabBranches:
 		return m.branchCursor
+	case tabTags:
+		return m.tagCursor
 	case tabPipelines:
 		return m.pipelineCursor
 	case tabIssues:
@@ -2995,6 +3218,10 @@ func (m *Model) moveCursorDown() {
 	case tabBranches:
 		if m.branchCursor < n-1 {
 			m.branchCursor++
+		}
+	case tabTags:
+		if m.tagCursor < n-1 {
+			m.tagCursor++
 		}
 	case tabPipelines:
 		if m.pipelineCursor < n-1 {
@@ -3020,6 +3247,10 @@ func (m *Model) moveCursorUp() {
 	case tabBranches:
 		if m.branchCursor > 0 {
 			m.branchCursor--
+		}
+	case tabTags:
+		if m.tagCursor > 0 {
+			m.tagCursor--
 		}
 	case tabPipelines:
 		if m.pipelineCursor > 0 {
@@ -3056,6 +3287,14 @@ func (m Model) openDetail() (Model, tea.Cmd) {
 			m.loadMsg = fmt.Sprintf("Loading commits for %s...", branch)
 			m.branchDetailView = branchViewCommits
 			return m, m.cmdLoadBranchCommits(branch)
+		}
+	case tabTags:
+		if m.tagCursor < len(m.tags) {
+			tag := m.tags[m.tagCursor]
+			m.state = stateLoading
+			m.loadMsg = fmt.Sprintf("Loading commits for tag %s...", tag.Name)
+			m.tagDetailName = tag.Name
+			return m, m.cmdLoadTagCommits(tag.Name)
 		}
 	case tabPipelines:
 		if m.pipelineCursor < len(m.pipelines) {
@@ -3166,6 +3405,8 @@ func (m Model) resetCursorForTab(tab tabID) Model {
 		m.mrPage = 1
 	case tabBranches:
 		m.branchCursor = 0
+	case tabTags:
+		m.tagCursor = 0
 	case tabPipelines:
 		m.pipelineCursor = 0
 		m.pipelinePage = 1
@@ -3191,6 +3432,8 @@ func (m Model) reloadCurrent() tea.Cmd {
 		return m.cmdLoadMRs()
 	case tabBranches:
 		return m.cmdLoadBranches()
+	case tabTags:
+		return m.cmdLoadTags()
 	case tabPipelines:
 		return m.cmdLoadPipelines()
 	case tabIssues:
@@ -3832,6 +4075,10 @@ func (m Model) View() string {
 		return m.viewEditIssue()
 	case stateCreateIssueBranch:
 		return m.viewCreateIssueBranch()
+	case stateCreateTag:
+		return m.viewCreateTag()
+	case stateEditTag:
+		return m.viewEditTag()
 	case stateDetail:
 		return m.viewDetail()
 	default:
@@ -3863,6 +4110,10 @@ func (m Model) viewBackground() string {
 		return m.viewEditIssue()
 	case stateCreateIssueBranch:
 		return m.viewCreateIssueBranch()
+	case stateCreateTag:
+		return m.viewCreateTag()
+	case stateEditTag:
+		return m.viewEditTag()
 	case stateDetail:
 		return m.viewDetail()
 	default:
@@ -4022,6 +4273,8 @@ func (m Model) viewBody(bodyH int) string {
 		return m.viewMRList()
 	case tabBranches:
 		return m.viewBranchList(bodyH)
+	case tabTags:
+		return m.viewTagList(bodyH)
 	case tabPipelines:
 		return m.viewPipelineList()
 	case tabIssues:
@@ -4208,6 +4461,8 @@ func (m Model) viewDetail() string {
 		} else {
 			body = m.viewBranchCompare(bodyH)
 		}
+	case tabTags:
+		body = m.viewTagCommits(bodyH)
 	case tabPipelines:
 		body = m.viewPipelineDetail(bodyH)
 	case tabIssues:
@@ -5856,7 +6111,7 @@ func (m Model) viewConfirm() string {
 
 func (m Model) viewFooter() string {
 	hints := []string{
-		keyHint("Tab/1-5", "tabs"),
+		keyHint("Tab/1-6", "tabs"),
 		keyHint("↑↓", "navigate"),
 		keyHint("Enter", "open"),
 		keyHint("r", "refresh"),
@@ -5905,6 +6160,14 @@ func (m Model) viewFooter() string {
 		if m.project != nil {
 			hints = append(hints, keyHint("c", "create MR"))
 			hints = append(hints, keyHint("C", "compare"))
+			hints = append(hints, keyHint("d", "delete"))
+		}
+	}
+
+	if m.tab == tabTags {
+		if m.project != nil {
+			hints = append(hints, keyHint("c", "create tag"))
+			hints = append(hints, keyHint("e", "edit tag"))
 			hints = append(hints, keyHint("d", "delete"))
 		}
 	}
@@ -6023,6 +6286,24 @@ func (m Model) viewDetailFooter() string {
 					keyHint("Esc", "back"),
 					keyHint("q", "quit"),
 				}
+			}
+		}
+	case tabTags:
+		if m.tagCommitDiffPanelOpen {
+			hints = []string{
+				keyHint("j/k", "scroll diff"),
+				keyHint("n/p", "next/prev file"),
+				keyHint("J/K", "next/prev hunk"),
+				keyHint("Tab/Esc", "close diff"),
+				keyHint("q", "quit"),
+			}
+		} else {
+			hints = []string{
+				keyHint("j/k", "scroll commits"),
+				keyHint("Tab", "view diff"),
+				keyHint("e", "edit tag"),
+				keyHint("Esc", "back"),
+				keyHint("q", "quit"),
 			}
 		}
 	case tabPipelines:
@@ -6976,3 +7257,778 @@ func (m Model) viewBranchCommitsSplit(bodyH int) string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, sep, right)
 }
 
+// ─── Tags support ─────────────────────────────────────────────────────────────
+
+func (m Model) cmdDeleteTag(tag string) tea.Cmd {
+	if m.project == nil {
+		return nil
+	}
+	pid := m.project.ID
+	return func() tea.Msg {
+		err := m.client.DeleteTag(pid, tag)
+		if err != nil {
+			return errMsg{err}
+		}
+		return actionDoneMsg{fmt.Sprintf("Tag '%s' deleted successfully!", tag)}
+	}
+}
+
+func (m Model) cmdCreateTag(name, ref, message string) tea.Cmd {
+	if m.project == nil {
+		return nil
+	}
+	pid := m.project.ID
+	return func() tea.Msg {
+		_, err := m.client.CreateTag(pid, name, ref, message)
+		if err != nil {
+			return errMsg{err}
+		}
+		return actionDoneMsg{fmt.Sprintf("🏷️ Tag '%s' created successfully!", name)}
+	}
+}
+
+func (m Model) cmdLoadTags() tea.Cmd {
+	if m.project == nil {
+		return nil
+	}
+	pid := m.project.ID
+	return func() tea.Msg {
+		tags, err := m.client.ListTags(pid)
+		if err != nil {
+			return errMsg{err}
+		}
+		return tagsLoadedMsg{tags}
+	}
+}
+
+func (m Model) cmdLoadTagCommits(tag string) tea.Cmd {
+	if m.project == nil {
+		return nil
+	}
+	pid := m.project.ID
+	return func() tea.Msg {
+		commits, err := m.client.ListCommits(pid, tag)
+		if err != nil {
+			return errMsg{err}
+		}
+		return tagCommitsLoadedMsg{tag: tag, commits: commits}
+	}
+}
+
+func (m Model) startCreateTag() (Model, tea.Cmd) {
+	if m.project == nil {
+		return m, nil
+	}
+	m.createTagName.SetValue("")
+	m.createTagMessage.SetValue("")
+	m.createTagBranchCursor = 0
+	if m.project != nil && m.project.DefaultBranch != "" {
+		for i, b := range m.branches {
+			if b == m.project.DefaultBranch {
+				m.createTagBranchCursor = i
+				break
+			}
+		}
+	}
+	m.createTagField = createTagNameField
+
+	m.prevState = m.state
+	m.state = stateCreateTag
+
+	var cmds []tea.Cmd
+	cmds = append(cmds, m.createTagName.Focus())
+	if len(m.branches) == 0 {
+		cmds = append(cmds, m.cmdLoadBranches())
+	}
+
+	return m, tea.Batch(cmds...)
+}
+
+func (m Model) handleCreateTagKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	key := msg.String()
+	switch key {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.createTagName.Blur()
+		m.createTagMessage.Blur()
+		m.state = m.prevState
+		return m, nil
+	case "tab":
+		m.createTagField = (m.createTagField + 1) % createTagFieldCount
+		return m.focusCreateTagField()
+	case "shift+tab":
+		m.createTagField = (m.createTagField - 1 + createTagFieldCount) % createTagFieldCount
+		return m.focusCreateTagField()
+	case "ctrl+s":
+		return m.submitCreateTag()
+	}
+
+	if m.createTagField == createTagRefField {
+		switch key {
+		case "j", "down":
+			if m.createTagBranchCursor < len(m.branches)-1 {
+				m.createTagBranchCursor++
+			}
+			return m, nil
+		case "k", "up":
+			if m.createTagBranchCursor > 0 {
+				m.createTagBranchCursor--
+			}
+			return m, nil
+		case "enter":
+			m.createTagField = createTagMessageField
+			return m.focusCreateTagField()
+		}
+	} else if m.createTagField == createTagNameField {
+		if key == "enter" {
+			m.createTagField = createTagRefField
+			return m.focusCreateTagField()
+		}
+	}
+
+	var cmd tea.Cmd
+	switch m.createTagField {
+	case createTagNameField:
+		m.createTagName, cmd = m.createTagName.Update(msg)
+	case createTagMessageField:
+		m.createTagMessage, cmd = m.createTagMessage.Update(msg)
+	}
+	return m, cmd
+}
+
+func (m Model) focusCreateTagField() (Model, tea.Cmd) {
+	m.createTagName.Blur()
+	m.createTagMessage.Blur()
+	switch m.createTagField {
+	case createTagNameField:
+		cmd := m.createTagName.Focus()
+		return m, cmd
+	case createTagRefField:
+		return m, nil
+	case createTagMessageField:
+		cmd := m.createTagMessage.Focus()
+		return m, cmd
+	}
+	return m, nil
+}
+
+func (m Model) submitCreateTag() (Model, tea.Cmd) {
+	tagName := strings.TrimSpace(m.createTagName.Value())
+	message := strings.TrimSpace(m.createTagMessage.Value())
+	if tagName == "" {
+		return m, nil
+	}
+
+	ref := ""
+	if len(m.branches) > 0 && m.createTagBranchCursor < len(m.branches) {
+		ref = m.branches[m.createTagBranchCursor]
+	}
+	if ref == "" && m.project != nil {
+		ref = m.project.DefaultBranch
+	}
+	if ref == "" {
+		ref = "main"
+	}
+
+	m.createTagName.Blur()
+	m.createTagMessage.Blur()
+	m.state = m.prevState
+
+	return m, m.cmdCreateTag(tagName, ref, message)
+}
+
+func (m *Model) tagCommitDiffLineCursorDown() {
+	if len(m.tagCommitDiffFiles) == 0 {
+		return
+	}
+	f := m.tagCommitDiffFiles[m.tagCommitDiffFileIdx]
+	if m.tagCommitDiffLineCursor < len(f.Lines)-1 {
+		m.tagCommitDiffLineCursor++
+	} else if m.tagCommitDiffFileIdx < len(m.tagCommitDiffFiles)-1 {
+		m.tagCommitDiffFileIdx++
+		m.tagCommitDiffLineCursor = 0
+		m.tagCommitDiffScrollOffset = 0
+	}
+}
+
+func (m *Model) tagCommitDiffLineCursorUp() {
+	if len(m.tagCommitDiffFiles) == 0 {
+		return
+	}
+	if m.tagCommitDiffLineCursor > 0 {
+		m.tagCommitDiffLineCursor--
+	} else if m.tagCommitDiffFileIdx > 0 {
+		m.tagCommitDiffFileIdx--
+		f := m.tagCommitDiffFiles[m.tagCommitDiffFileIdx]
+		m.tagCommitDiffLineCursor = len(f.Lines) - 1
+		m.tagCommitDiffScrollOffset = 0
+	}
+}
+
+func (m *Model) tagCommitDiffNextHunk() {
+	if len(m.tagCommitDiffFiles) == 0 {
+		return
+	}
+	f := m.tagCommitDiffFiles[m.tagCommitDiffFileIdx]
+	for i := m.tagCommitDiffLineCursor + 1; i < len(f.Lines); i++ {
+		if f.Lines[i].Type == "hunk" {
+			m.tagCommitDiffLineCursor = i
+			return
+		}
+	}
+	if m.tagCommitDiffFileIdx < len(m.tagCommitDiffFiles)-1 {
+		m.tagCommitDiffFileIdx++
+		m.tagCommitDiffLineCursor = 0
+		m.tagCommitDiffScrollOffset = 0
+	}
+}
+
+func (m *Model) tagCommitDiffPrevHunk() {
+	if len(m.tagCommitDiffFiles) == 0 {
+		return
+	}
+	f := m.tagCommitDiffFiles[m.tagCommitDiffFileIdx]
+	for i := m.tagCommitDiffLineCursor - 1; i >= 0; i-- {
+		if f.Lines[i].Type == "hunk" {
+			m.tagCommitDiffLineCursor = i
+			return
+		}
+	}
+	if m.tagCommitDiffFileIdx > 0 {
+		m.tagCommitDiffFileIdx--
+		m.tagCommitDiffLineCursor = 0
+		m.tagCommitDiffScrollOffset = 0
+	}
+}
+
+func (m *Model) updateTagCommitDiffScroll() {
+	h := m.height - 8
+	if h < 5 {
+		h = 5
+	}
+	if m.tagCommitDiffLineCursor < m.tagCommitDiffScrollOffset {
+		m.tagCommitDiffScrollOffset = m.tagCommitDiffLineCursor
+	} else if m.tagCommitDiffLineCursor >= m.tagCommitDiffScrollOffset+h {
+		m.tagCommitDiffScrollOffset = m.tagCommitDiffLineCursor - h + 1
+	}
+}
+
+func (m Model) viewTagList(bodyH int) string {
+	if len(m.tags) == 0 {
+		return dimStyle.Padding(2).Render("No tags found.")
+	}
+
+	header := lipgloss.NewStyle().
+		Foreground(colorMuted).
+		PaddingLeft(2).
+		Render(fmt.Sprintf("%-25s  %-12s  %-40s", "Tag Name", "Commit", "Message"))
+	header += "\n" + lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", m.width-2))
+
+	listH := bodyH - 3
+	if listH < 1 {
+		listH = 1
+	}
+
+	maxVisible := listH
+	start := m.tagCursor - maxVisible/2
+	if start < 0 {
+		start = 0
+	}
+	end := start + maxVisible
+	if end > len(m.tags) {
+		end = len(m.tags)
+		start = end - maxVisible
+		if start < 0 {
+			start = 0
+		}
+	}
+
+	var rows []string
+	for i := start; i < end; i++ {
+		t := m.tags[i]
+		selected := i == m.tagCursor
+
+		commitStr := t.ShortID
+		if commitStr == "" {
+			commitStr = t.Target
+		}
+
+		cleanMsg := strings.ReplaceAll(strings.ReplaceAll(t.Message, "\r\n", " "), "\n", " ")
+		line := fmt.Sprintf("%-25s  %-12s  %-40s",
+			truncate(t.Name, 25),
+			truncate(commitStr, 12),
+			truncate(cleanMsg, 40),
+		)
+
+		if selected {
+			rows = append(rows, selectedStyle.Width(m.width-2).Render("▶ "+line))
+		} else {
+			rows = append(rows, normalItemStyle.Width(m.width-2).Render("  "+line))
+		}
+	}
+
+	return header + "\n" + strings.Join(rows, "\n")
+}
+
+func (m Model) viewTagCommits(bodyH int) string {
+	if m.tagCommitDiffPanelOpen {
+		return m.viewTagCommitsSplit(bodyH)
+	}
+
+	if len(m.tagCommits) == 0 {
+		return dimStyle.Padding(2).Render("Loading commits...")
+	}
+
+	header := lipgloss.NewStyle().
+		Foreground(colorMuted).
+		PaddingLeft(2).
+		Render(fmt.Sprintf("Commits for tag: %s", m.tagDetailName))
+	header += "\n" + lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", m.width-2))
+
+	listH := bodyH - 3
+	if listH < 1 {
+		listH = 1
+	}
+
+	maxVisible := listH
+	start := m.tagCommitCursor - maxVisible/2
+	if start < 0 {
+		start = 0
+	}
+	end := start + maxVisible
+	if end > len(m.tagCommits) {
+		end = len(m.tagCommits)
+		start = end - maxVisible
+		if start < 0 {
+			start = 0
+		}
+	}
+
+	var rows []string
+	for i := start; i < end; i++ {
+		c := m.tagCommits[i]
+		selected := i == m.tagCommitCursor
+
+		line := fmt.Sprintf("%-10s  %-50s  %-15s  %s",
+			c.ShortID,
+			truncate(c.Title, 50),
+			truncate(c.AuthorName, 15),
+			c.Date,
+		)
+
+		if selected {
+			rows = append(rows, selectedStyle.Width(m.width-2).Render("▶ "+line))
+		} else {
+			rows = append(rows, normalItemStyle.Width(m.width-2).Render("  "+line))
+		}
+	}
+
+	return header + "\n" + strings.Join(rows, "\n")
+}
+
+func (m Model) viewTagCommitsSplit(bodyH int) string {
+	leftW := m.width * 2 / 5
+	rightW := m.width - leftW - 1 // -1 for separator
+
+	if leftW < 20 {
+		leftW = 20
+	}
+
+	header := lipgloss.NewStyle().
+		Foreground(colorMuted).
+		PaddingLeft(2).
+		Render(fmt.Sprintf("Commits: %s", m.tagDetailName))
+	header += "\n" + lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", leftW-2))
+
+	listH := bodyH - 3
+	if listH < 1 {
+		listH = 1
+	}
+
+	maxVisible := listH
+	start := m.tagCommitCursor - maxVisible/2
+	if start < 0 {
+		start = 0
+	}
+	end := start + maxVisible
+	if end > len(m.tagCommits) {
+		end = len(m.tagCommits)
+		start = end - maxVisible
+		if start < 0 {
+			start = 0
+		}
+	}
+
+	var rows []string
+	for i := start; i < end; i++ {
+		c := m.tagCommits[i]
+		selected := i == m.tagCommitCursor
+
+		line := fmt.Sprintf("%-10s  %s",
+			c.ShortID,
+			truncate(c.Title, leftW-15),
+		)
+
+		if selected {
+			rows = append(rows, selectedStyle.Width(leftW-2).Render("▶ "+line))
+		} else {
+			rows = append(rows, normalItemStyle.Width(leftW-2).Render("  "+line))
+		}
+	}
+
+	leftContent := header + "\n" + strings.Join(rows, "\n")
+	left := lipgloss.NewStyle().Width(leftW).Height(bodyH).MaxHeight(bodyH).Render(leftContent)
+
+	// Separator
+	sepContent := strings.Repeat("│\n", bodyH)
+	if bodyH > 0 {
+		sepContent = sepContent[:len(sepContent)-1]
+	}
+	sep := lipgloss.NewStyle().Foreground(colorBorder).Render(sepContent)
+
+	// Right: diff panel
+	rightContent := m.viewTagCommitDiffPanel(rightW, bodyH)
+	right := lipgloss.NewStyle().Width(rightW).Height(bodyH).MaxHeight(bodyH).Render(rightContent)
+
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, sep, right)
+}
+
+func (m Model) viewTagCommitDiffPanel(w, h int) string {
+	var lines []string
+
+	if m.tagCommitDiffLoading {
+		lines = append(lines,
+			subtitleStyle.Render("  Changes"),
+			"",
+			dimStyle.Render("  Loading diffs..."),
+		)
+		return strings.Join(lines, "\n")
+	}
+
+	if len(m.tagCommitDiffFiles) == 0 {
+		lines = append(lines,
+			subtitleStyle.Render("  Changes"),
+			"",
+			dimStyle.Render("  No files changed or no diff found."),
+		)
+		return strings.Join(lines, "\n")
+	}
+
+	// File list header
+	fileCount := len(m.tagCommitDiffFiles)
+	headerLine := subtitleStyle.Render("  Changes ") +
+		dimStyle.Render(fmt.Sprintf("(%d file(s))  n/p=file, J/K=hunk", fileCount))
+	lines = append(lines, headerLine)
+
+	// File tabs
+	var fileTabs []string
+	startIdx := m.tagCommitDiffFileIdx - 1
+	if startIdx < 0 {
+		startIdx = 0
+	}
+	endIdx := startIdx + 3
+	if endIdx > len(m.tagCommitDiffFiles) {
+		endIdx = len(m.tagCommitDiffFiles)
+		startIdx = endIdx - 3
+		if startIdx < 0 {
+			startIdx = 0
+		}
+	}
+
+	for i := startIdx; i < endIdx; i++ {
+		f := m.tagCommitDiffFiles[i]
+		name := f.NewPath
+		if len(name) > 35 {
+			name = "…" + name[len(name)-34:]
+		}
+		label := fmt.Sprintf("+%d -%d %s", f.Added, f.Deleted, name)
+		if i == m.tagCommitDiffFileIdx {
+			fileTabs = append(fileTabs, accentStyle.Render(" ▶ "+label))
+		} else {
+			fileTabs = append(fileTabs, dimStyle.Render("   "+label))
+		}
+	}
+	lines = append(lines, strings.Join(fileTabs, "\n"))
+	lines = append(lines, lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", w-2)))
+
+	tabsLen := endIdx - startIdx
+	diffHeight := h - (4 + tabsLen)
+	if diffHeight < 1 {
+		diffHeight = 1
+	}
+
+	// File diff content
+	if m.tagCommitDiffFileIdx < len(m.tagCommitDiffFiles) {
+		f := m.tagCommitDiffFiles[m.tagCommitDiffFileIdx]
+		renderedCount := 0
+
+		for i := m.tagCommitDiffScrollOffset; i < len(f.Lines) && renderedCount < diffHeight; i++ {
+			dl := f.Lines[i]
+			selected := i == m.tagCommitDiffLineCursor
+			content := dl.Content
+			avail := w - 5
+			if avail < 1 {
+				avail = 1
+			}
+			if lipgloss.Width(content) > avail {
+				content = ansi.Truncate(content, avail-1, "…")
+			}
+
+			var rendered string
+			switch dl.Type {
+			case "added":
+				st := lipgloss.NewStyle().Foreground(colorSuccess)
+				if selected {
+					st = st.Background(colorBgHover).Bold(true)
+				}
+				rendered = st.Render("▶ " + content)
+			case "removed":
+				st := lipgloss.NewStyle().Foreground(colorError)
+				if selected {
+					st = st.Background(colorBgHover).Bold(true)
+				}
+				rendered = st.Render("▶ " + content)
+			case "hunk":
+				st := lipgloss.NewStyle().Foreground(colorInfo).Italic(true)
+				if selected {
+					st = st.Background(colorBgHover).Bold(true)
+				}
+				rendered = st.Render("  " + content)
+			default:
+				st := lipgloss.NewStyle().Foreground(colorTextDim)
+				if selected {
+					st = st.Background(colorBgHover)
+				}
+				rendered = st.Render("  " + content)
+			}
+			lines = append(lines, rendered)
+			renderedCount++
+		}
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) viewCreateTag() string {
+	var rows []string
+
+	rows = append(rows, subtitleStyle.Render("🏷️ Create Tag"), "")
+
+	fieldLabel := func(idx int, label string) string {
+		if m.createTagField == idx {
+			return accentStyle.Render("▶ " + label)
+		}
+		return dimStyle.Render("  " + label)
+	}
+
+	// Field 0: Tag Name (Title)
+	nameBorderColor := colorBorder
+	if m.createTagField == createTagNameField {
+		nameBorderColor = colorAccent
+	}
+	nameBox := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(nameBorderColor).
+		Padding(0, 1).
+		Width(58).
+		MarginLeft(2).
+		Render(m.createTagName.View())
+	rows = append(rows, fieldLabel(createTagNameField, "Tag Name (Title):"))
+	rows = append(rows, nameBox)
+	rows = append(rows, "")
+
+	// Field 1: Create From Branch (Selector List)
+	refBorderColor := colorBorder
+	if m.createTagField == createTagRefField {
+		refBorderColor = colorAccent
+	}
+
+	var branchLines []string
+	if len(m.branches) == 0 {
+		branchLines = append(branchLines, dimStyle.Render("  Loading branches..."))
+	} else {
+		maxVisible := 4
+		start := m.createTagBranchCursor - maxVisible/2
+		if start < 0 {
+			start = 0
+		}
+		end := start + maxVisible
+		if end > len(m.branches) {
+			end = len(m.branches)
+			start = end - maxVisible
+			if start < 0 {
+				start = 0
+			}
+		}
+
+		for i := start; i < end; i++ {
+			b := m.branches[i]
+			selected := i == m.createTagBranchCursor
+			isDefault := m.project != nil && b == m.project.DefaultBranch
+
+			label := b
+			if isDefault {
+				label += " (default)"
+			}
+
+			if selected {
+				branchLines = append(branchLines, selectedStyle.Width(54).Render("▶ "+truncate(label, 50)))
+			} else {
+				branchLines = append(branchLines, normalItemStyle.Width(54).Render("  "+truncate(label, 50)))
+			}
+		}
+	}
+
+	refBoxContent := strings.Join(branchLines, "\n")
+	refBox := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(refBorderColor).
+		Padding(0, 1).
+		Width(58).
+		MarginLeft(2).
+		Render(refBoxContent)
+	rows = append(rows, fieldLabel(createTagRefField, "Create From Branch:"))
+	rows = append(rows, refBox)
+	rows = append(rows, "")
+
+	// Field 2: Description / Message (Multiline Textarea)
+	msgBorderColor := colorBorder
+	if m.createTagField == createTagMessageField {
+		msgBorderColor = colorAccent
+	}
+	msgBox := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(msgBorderColor).
+		Padding(0, 1).
+		Width(58).
+		MarginLeft(2).
+		Render(m.createTagMessage.View())
+	rows = append(rows, fieldLabel(createTagMessageField, "Description / Message:"))
+	rows = append(rows, msgBox)
+	rows = append(rows, "")
+
+	hints := []string{
+		keyHint("Tab/Shift+Tab", "switch fields"),
+		keyHint("↑/↓ or j/k", "select branch"),
+		keyHint("Ctrl+S", "create tag"),
+		keyHint("Esc", "cancel"),
+	}
+	rows = append(rows, strings.Join(hints, "  "))
+
+	content := strings.Join(rows, "\n")
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorAccent).
+		Padding(1, 2).
+		Render(content)
+
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+}
+
+// ─── Edit Tag support ─────────────────────────────────────────────────────────
+
+func (m Model) cmdUpdateTagRelease(tagName, description string) tea.Cmd {
+	if m.project == nil {
+		return nil
+	}
+	pid := m.project.ID
+	return func() tea.Msg {
+		err := m.client.UpdateTagRelease(pid, tagName, description)
+		if err != nil {
+			return errMsg{err}
+		}
+		return actionDoneMsg{fmt.Sprintf("🏷️ Tag '%s' release notes updated!", tagName)}
+	}
+}
+
+func (m Model) startEditTag(tag *gitlab.TagInfo) (Model, tea.Cmd) {
+	if tag == nil || m.project == nil {
+		return m, nil
+	}
+	m.editTagName = tag.Name
+	// Pre-fill with existing release description if present, otherwise tag message
+	existing := tag.ReleaseDesc
+	if existing == "" {
+		existing = tag.Message
+	}
+	m.editTagDescription.SetValue(existing)
+	m.editTagDescription.Blur()
+
+	m.prevState = m.state
+	m.state = stateEditTag
+
+	cmd := m.editTagDescription.Focus()
+	m.editTagDescription.CursorEnd()
+	return m, cmd
+}
+
+func (m Model) handleEditTagKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	switch key {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.editTagDescription.Blur()
+		m.state = m.prevState
+		return m, nil
+	case "ctrl+s":
+		return m.submitEditTag()
+	default:
+		var cmd tea.Cmd
+		m.editTagDescription, cmd = m.editTagDescription.Update(msg)
+		return m, cmd
+	}
+}
+
+func (m Model) submitEditTag() (Model, tea.Cmd) {
+	description := strings.TrimSpace(m.editTagDescription.Value())
+	m.editTagDescription.Blur()
+	m.state = m.prevState
+	return m, m.cmdUpdateTagRelease(m.editTagName, description)
+}
+
+func (m Model) viewEditTag() string {
+	var rows []string
+
+	rows = append(rows, subtitleStyle.Render("✏️  Edit Tag"), "")
+
+	// Tag name (read-only)
+	rows = append(rows, dimStyle.Render("  Tag Name:"))
+	nameBox := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorBorder).
+		Padding(0, 1).
+		Width(58).
+		MarginLeft(2).
+		Render(lipgloss.NewStyle().Foreground(colorAccent).Render(m.editTagName))
+	rows = append(rows, nameBox)
+	rows = append(rows, "")
+
+	// Release description (editable textarea)
+	rows = append(rows, accentStyle.Render("▶ Release Description / Notes:"))
+	descBox := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorAccent).
+		Padding(0, 1).
+		Width(58).
+		MarginLeft(2).
+		Render(m.editTagDescription.View())
+	rows = append(rows, descBox)
+	rows = append(rows, "")
+
+	hints := []string{
+		keyHint("Ctrl+S", "save"),
+		keyHint("Esc", "cancel"),
+	}
+	rows = append(rows, strings.Join(hints, "  "))
+
+	content := strings.Join(rows, "\n")
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorAccent).
+		Padding(1, 2).
+		Render(content)
+
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+}

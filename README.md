@@ -8,6 +8,7 @@ Built with [BubbleTea](https://github.com/charmbracelet/bubbletea) and the offic
 
 - 🔀 **Merge Requests** — list, filter by state (open/merged/closed), view details, approve, merge, close, edit existing MRs, and **create new MRs** via an interactive wizard
 - 🌿 **Branches** — list branches, delete branch (with confirmation), create MR directly from a branch, view commits history, and compare branches (showing commit differences and changed files diff)
+- 🏷️ **Tags** — list tags, create new tag (title, create from branch/ref selector, description), edit tag release notes (`e`), delete tag (with confirmation), view commit history of a tag, and toggle commit diff pane with `Tab`
 - 🚀 **Pipelines** — list, view details (with dual-pane layout showing jobs and statuses), automatic background refresh (every 5s) for active pipelines, retry/cancel pipelines, restart individual jobs, scroll/search job trace logs, and open traces directly in your external editor
 - 🐛 **Issues** — list, filter by state (open/closed/all), view details with discussion threads & comments, create new issues (`c`), edit existing issues (`e`), create branch for issue (`b`), close (`x`), reopen (`O`), post new comments, vote up/down, select/edit/delete comments
 - 📁 **Projects** — browse and switch projects on the current server
@@ -124,16 +125,16 @@ Both SSH and HTTPS remotes are supported:
 | ----------------- | ----------------------------------------------------------- |
 | `Tab` / `→`       | Next tab                                                    |
 | `Shift+Tab` / `←` | Previous tab                                                |
-| `1–5`             | Jump to tab (MRs, Branches, Pipelines, Issues, Projects)    |
+| `1–6`             | Jump to tab (MRs, Branches, Tags, Pipelines, Issues, Projects) |
 | `j` / `↓`         | Move down                                                   |
 | `k` / `↑`         | Move up                                                     |
-| `Enter`           | Open detail / select project / show branch commits          |
+| `Enter`           | Open detail / select project / show commits                 |
 | `s`               | Cycle MR or Issue state filter                              |
-| `c`               | Create new MR or Issue (MRs, Branches, and Issues tabs)     |
+| `c`               | Create new MR, Tag, or Issue (MRs, Branches, Tags, Issues)  |
 | `C`               | Compare branch with another (Branches tab only)             |
 | `b`               | Create branch for issue (Issues tab only)                   |
-| `d`               | Delete branch (Branches tab only)                           |
-| `e`               | Edit selected MR or Issue (MRs and Issues tabs)             |
+| `d`               | Delete branch or tag (Branches and Tags tabs)               |
+| `e`               | Edit selected MR, Tag, or Issue (MRs, Tags, and Issues tabs)|
 | `x`               | Close selected MR or Issue                                  |
 | `O`               | Reopen selected MR or Issue                                 |
 | `r`               | Refresh current tab                                         |
@@ -170,6 +171,24 @@ Both SSH and HTTPS remotes are supported:
 | `Tab`     | Toggle focus between commits panel and files panel (compare view)  |
 | `Enter`   | View branch commits (main list) / expand file diff (compare files) |
 | `Esc`     | Go back (exit diff, exit comparison list, or return to branch list)|
+
+### Tag detail
+
+| Key       | Action                                                             |
+| --------- | ------------------------------------------------------------------ |
+| `j` / `k` | Scroll commits list / navigate diff lines                          |
+| `Tab`     | Toggle diff pane for selected commit                               |
+| `n` / `p` | Next / previous file in diff pane                                  |
+| `J` / `K` | Next / previous hunk in diff pane                                  |
+| `e`       | Edit release notes for this tag                                    |
+| `Esc`     | Close diff pane (if open) or return to tag list                    |
+
+### Edit Tag popup
+
+Press `e` on the tag list or in the tag detail view to open the Edit Tag popup.
+- **Tag Name** is shown read-only.
+- **Release Description / Notes** is a multiline textarea — edit freely and press `Ctrl+S` to save, or `Esc` to cancel.
+- Changes are saved as a GitLab Release associated with the tag (creating one if none exists yet).
 
 
 ### Create MR wizard

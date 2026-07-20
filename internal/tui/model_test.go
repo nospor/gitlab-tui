@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"gitlab-tui/internal/config"
@@ -720,3 +722,89 @@ func TestFormatSystemNoteStyled(t *testing.T) {
 		t.Errorf("expected text contents 'new tst2' and '+222' in output, got: %q", got)
 	}
 }
+
+func TestTagsTab(t *testing.T) {
+	InitTheme("catppuccin")
+
+	m := Model{
+		cfg: &config.Config{
+			Servers: []config.Server{
+				{Name: "GitLab", URL: "https://gitlab.com"},
+			},
+		},
+		tab:       tabMRs,
+		state:     stateMain,
+		prevState: stateMain,
+		project:   &gitlab.ProjectInfo{ID: 1, DefaultBranch: "main"},
+		tags: []*gitlab.TagInfo{
+			{Name: "v1.0.0", Target: "main", ShortID: "abc1234", Message: "Initial release\nLine 2 details"},
+		},
+		tagCursor:        0,
+		width:            80,
+		height:           24,
+		branches:         []string{"main", "feature/login"},
+		createTagName:    textinput.New(),
+		createTagMessage: textarea.New(),
+	}
+
+	// 1. Switch to Tags tab using key '3'
+	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m = res.(Model)
+	if m.tab != tabTags {
+		t.Errorf("expected tab to be tabTags, got %v", m.tab)
+	}
+
+	listOut := m.viewTagList(20)
+	if strings.Contains(listOut, "Initial release\nLine 2") {
+		t.Errorf("expected newlines in tag message to be replaced with spaces, got raw newline in list output")
+	}
+
+	// 2. Press 'c' to start Create Tag
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = res.(Model)
+	if m.state != stateCreateTag {
+		t.Errorf("expected state to be stateCreateTag, got %v", m.state)
+	}
+
+	// Press Esc to cancel Create Tag
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = res.(Model)
+	if m.state != stateMain {
+		t.Errorf("expected state to return to stateMain, got %v", m.state)
+	}
+
+	// 3. Press 'd' to delete tag (prompt confirm)
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m = res.(Model)
+	if m.state != stateConfirm {
+		t.Errorf("expected state to be stateConfirm for tag deletion, got %v", m.state)
+	}
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = res.(Model)
+
+	// 4. Open Detail view on tag
+	m.state = stateDetail
+	m.tagDetailName = "v1.0.0"
+	m.tagCommits = []*gitlab.CommitInfo{
+		{ID: "abc123456789", ShortID: "abc1234", Title: "feat: release v1.0.0", AuthorName: "Dev", Date: "2026-07-20"},
+	}
+
+	// Render view detail
+	_ = m.View()
+
+	// 5. Press Tab to toggle diff panel
+	msgTab := tea.KeyMsg{Type: tea.KeyTab}
+	res, _ = m.Update(msgTab)
+	m = res.(Model)
+	if !m.tagCommitDiffPanelOpen {
+		t.Errorf("expected tagCommitDiffPanelOpen to be true after pressing Tab, got false")
+	}
+
+	// Press Tab again to close diff panel
+	res, _ = m.Update(msgTab)
+	m = res.(Model)
+	if m.tagCommitDiffPanelOpen {
+		t.Errorf("expected tagCommitDiffPanelOpen to be false after pressing Tab again, got true")
+	}
+}
+
