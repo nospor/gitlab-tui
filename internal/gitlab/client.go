@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	gl "gitlab.com/gitlab-org/api/client-go"
@@ -1706,6 +1707,187 @@ func (c *Client) UpdateTagRelease(projectID int, tagName, description string) er
 	})
 	if err2 != nil {
 		return fmt.Errorf("updating release for tag %q: %w", tagName, err2)
+	}
+	return nil
+}
+
+// ─── Container Registry ───────────────────────────────────────────────────────
+
+// RegistryImage represents a container registry repository (image).
+type RegistryImage struct {
+	ID        int
+	Name      string
+	Path      string
+	Location  string
+	TagsCount int
+	CreatedAt string
+}
+
+// RegistryTag represents a single tag in a registry repository.
+type RegistryTag struct {
+	Name          string
+	Path          string
+	Location      string
+	Digest        string
+	CreatedAt     string
+	CreatedAtTime time.Time
+	TotalSize     int64
+}
+
+// RegistryTagDetail holds extended information about a registry tag.
+type RegistryTagDetail struct {
+	Name          string
+	Path          string
+	Location      string
+	Digest        string
+	CreatedAt     string
+	TotalSize     int64
+	Revision      string
+	ShortRevision string
+	MediaType     string
+}
+
+// Note: RegistryTagDetail.MediaType is populated from the SDK tag detail,
+// but RegistryRepositoryTag does not expose MediaType in this SDK version.
+// We keep the field in our struct for forward compatibility.
+
+// ListRegistryImages lists container registry repositories for a project.
+func (c *Client) ListRegistryImages(projectID int) ([]*RegistryImage, error) {
+	var result []*RegistryImage
+	page := int64(1)
+	for {
+		opts := &gl.ListProjectRegistryRepositoriesOptions{
+			ListOptions: gl.ListOptions{
+				Page:    page,
+				PerPage: 100,
+			},
+			Tags:      gl.Ptr(false),
+			TagsCount: gl.Ptr(true),
+		}
+		repos, resp, err := c.raw.ContainerRegistry.ListProjectRegistryRepositories(projectID, opts)
+		if err != nil {
+			return nil, fmt.Errorf("listing registry repositories: %w", err)
+		}
+		for _, r := range repos {
+			ri := &RegistryImage{
+				ID:        int(r.ID),
+				Name:      r.Name,
+				Path:      r.Path,
+				Location:  r.Location,
+				TagsCount: int(r.TagsCount),
+			}
+			if r.CreatedAt != nil {
+				ri.CreatedAt = r.CreatedAt.Format("2006-01-02 15:04")
+			}
+			result = append(result, ri)
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		page = resp.NextPage
+	}
+	return result, nil
+}
+
+// ListRegistryTags lists tags for a specific registry repository.
+func (c *Client) ListRegistryTags(projectID, repositoryID int) ([]*RegistryTag, error) {
+	var result []*RegistryTag
+	page := int64(1)
+	for {
+		opts := &gl.ListRegistryRepositoryTagsOptions{
+			ListOptions: gl.ListOptions{
+				Page:    page,
+				PerPage: 100,
+			},
+		}
+		tags, resp, err := c.raw.ContainerRegistry.ListRegistryRepositoryTags(projectID, int64(repositoryID), opts)
+		if err != nil {
+			return nil, fmt.Errorf("listing registry tags: %w", err)
+		}
+		for _, t := range tags {
+			rt := &RegistryTag{
+				Name:     t.Name,
+				Path:     t.Path,
+				Location: t.Location,
+			}
+			if t.CreatedAt != nil {
+				rt.CreatedAt = t.CreatedAt.Format("2006-01-02 15:04")
+				rt.CreatedAtTime = *t.CreatedAt
+			}
+			result = append(result, rt)
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		page = resp.NextPage
+	}
+
+	// Fetch detail (creation date, total size, digest) concurrently for tags missing CreatedAt
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 10) // Limit concurrent requests to 10
+	for _, rt := range result {
+		if rt.CreatedAt == "" {
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(tag *RegistryTag) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				detail, _, err := c.raw.ContainerRegistry.GetRegistryRepositoryTagDetail(projectID, int64(repositoryID), tag.Name)
+				if err == nil && detail != nil {
+					if detail.CreatedAt != nil {
+						tag.CreatedAt = detail.CreatedAt.Format("2006-01-02 15:04")
+						tag.CreatedAtTime = *detail.CreatedAt
+					}
+					if detail.Digest != "" {
+						tag.Digest = detail.Digest
+					}
+					if detail.TotalSize > 0 {
+						tag.TotalSize = detail.TotalSize
+					}
+				}
+			}(rt)
+		}
+	}
+	wg.Wait()
+
+	return result, nil
+}
+
+// GetRegistryTagDetail fetches detailed info about a specific registry tag.
+func (c *Client) GetRegistryTagDetail(projectID, repositoryID int, tagName string) (*RegistryTagDetail, error) {
+	t, _, err := c.raw.ContainerRegistry.GetRegistryRepositoryTagDetail(projectID, int64(repositoryID), tagName)
+	if err != nil {
+		return nil, fmt.Errorf("getting registry tag detail %q: %w", tagName, err)
+	}
+	td := &RegistryTagDetail{
+		Name:          t.Name,
+		Path:          t.Path,
+		Location:      t.Location,
+		Digest:        t.Digest,
+		Revision:      t.Revision,
+		ShortRevision: t.ShortRevision,
+		TotalSize:     t.TotalSize,
+	}
+	if t.CreatedAt != nil {
+		td.CreatedAt = t.CreatedAt.Format("2006-01-02 15:04")
+	}
+	return td, nil
+}
+
+// DeleteRegistryImage deletes a container registry repository.
+func (c *Client) DeleteRegistryImage(projectID, repositoryID int) error {
+	_, err := c.raw.ContainerRegistry.DeleteRegistryRepository(projectID, int64(repositoryID))
+	if err != nil {
+		return fmt.Errorf("deleting registry repository %d: %w", repositoryID, err)
+	}
+	return nil
+}
+
+// DeleteRegistryTag deletes a specific tag from a registry repository.
+func (c *Client) DeleteRegistryTag(projectID, repositoryID int, tagName string) error {
+	_, err := c.raw.ContainerRegistry.DeleteRegistryRepositoryTag(projectID, int64(repositoryID), tagName)
+	if err != nil {
+		return fmt.Errorf("deleting registry tag %q: %w", tagName, err)
 	}
 	return nil
 }

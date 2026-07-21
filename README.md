@@ -10,6 +10,7 @@ Built with [BubbleTea](https://github.com/charmbracelet/bubbletea) and the offic
 - 🌿 **Branches** — list branches, delete branch (with confirmation), create MR directly from a branch, view commits history, and compare branches (showing commit differences and changed files diff)
 - 🏷️ **Tags** — list tags, create new tag (title, create from branch/ref selector, description), edit tag release notes (`e`), delete tag (with confirmation), view commit history of a tag, and toggle commit diff pane with `Tab`
 - 🚀 **Pipelines** — list, view details (with dual-pane layout showing jobs and statuses), automatic background refresh (every 5s) for active pipelines, retry/cancel pipelines, restart individual jobs, scroll/search job trace logs, and open traces directly in your external editor
+- 📦 **Container Registry** — list image repositories, view repository tags (with creation date, size, and path), sort tags by creation date (`s` to toggle desc/asc), delete image repositories or specific tags (with confirmation), and view extended tag details
 - 🐛 **Issues** — list, filter by state (open/closed/all), view details with discussion threads & comments, create new issues (`c`), edit existing issues (`e`), create branch for issue (`b`), close (`x`), reopen (`O`), post new comments, vote up/down, select/edit/delete comments
 - 📁 **Projects** — browse and switch projects on the current server
 - 🔌 **Multiple servers** — configure several GitLab instances, switch between them
@@ -121,27 +122,27 @@ Both SSH and HTTPS remotes are supported:
 
 ### Main view
 
-| Key               | Action                                                      |
-| ----------------- | ----------------------------------------------------------- |
-| `Tab` / `→`       | Next tab                                                    |
-| `Shift+Tab` / `←` | Previous tab                                                |
-| `1–6`             | Jump to tab (MRs, Branches, Tags, Pipelines, Issues, Projects) |
-| `j` / `↓`         | Move down                                                   |
-| `k` / `↑`         | Move up                                                     |
-| `Enter`           | Open detail / select project / show commits                 |
-| `s`               | Cycle MR or Issue state filter                              |
-| `c`               | Create new MR, Tag, or Issue (MRs, Branches, Tags, Issues)  |
-| `C`               | Compare branch with another (Branches tab only)             |
-| `b`               | Create branch for issue (Issues tab only)                   |
-| `d`               | Delete branch or tag (Branches and Tags tabs)               |
-| `e`               | Edit selected MR, Tag, or Issue (MRs, Tags, and Issues tabs)|
-| `x`               | Close selected MR or Issue                                  |
-| `O`               | Reopen selected MR or Issue                                 |
-| `r`               | Refresh current tab                                         |
-| `n` / `p`         | Next / previous page                                        |
-| `P`               | Switch project                                              |
-| `S`               | Switch server                                               |
-| `q` / `Ctrl+C`    | Quit                                                        |
+| Key               | Action                                                                         |
+| ----------------- | ------------------------------------------------------------------------------ |
+| `Tab` / `→`       | Next tab                                                                       |
+| `Shift+Tab` / `←` | Previous tab                                                                   |
+| `1–7`             | Jump to tab (MRs, Branches, Tags, Pipelines, Registry, Issues, Projects)       |
+| `j` / `↓`         | Move down                                                                      |
+| `k` / `↑`         | Move up                                                                        |
+| `Enter`           | Open detail / select project / show commits / open image tags                  |
+| `s`               | Cycle MR/Issue state filter, or toggle Container Registry tag sort order       |
+| `c`               | Create new MR, Tag, or Issue (MRs, Branches, Tags, Issues)                     |
+| `C`               | Compare branch with another (Branches tab only)                                |
+| `b`               | Create branch for issue (Issues tab only)                                      |
+| `d`               | Delete branch, tag, registry image, or registry tag (with confirmation)        |
+| `e`               | Edit selected MR, Tag, or Issue (MRs, Tags, and Issues tabs)                   |
+| `x`               | Close selected MR or Issue                                                     |
+| `O`               | Reopen selected MR or Issue                                                    |
+| `r`               | Refresh current tab                                                            |
+| `n` / `p`         | Next / previous page                                                           |
+| `P`               | Switch project                                                                 |
+| `S`               | Switch server                                                                  |
+| `q` / `Ctrl+C`    | Quit                                                                           |
 
 ### MR detail
 
@@ -182,6 +183,15 @@ Both SSH and HTTPS remotes are supported:
 | `J` / `K` | Next / previous hunk in diff pane                                  |
 | `e`       | Edit release notes for this tag                                    |
 | `Esc`     | Close diff pane (if open) or return to tag list                    |
+
+### Container Registry
+
+| Key       | Action                                                                   |
+| --------- | ------------------------------------------------------------------------ |
+| `Enter`   | Open image to view tags / Open tag to view detailed info                 |
+| `s`       | Toggle tag creation date sort order (descending / ascending)             |
+| `d`       | Delete highlighted image repository (view 0) or tag (view 1) with prompt |
+| `Esc`     | Go back one level (Tag Detail → Tag List → Image List)                    |
 
 ### Edit Tag popup
 

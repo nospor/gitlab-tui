@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -46,6 +47,7 @@ const (
 	tabBranches
 	tabTags
 	tabPipelines
+	tabRegistry
 	tabIssues
 	tabProjects
 	tabCount
@@ -56,8 +58,9 @@ var tabLabels = [tabCount]string{
 	"  2: Branches",
 	"  3: Tags",
 	"  4: Pipelines",
-	"  5: Issues",
-	"  6: Projects",
+	"  5: Container Registry",
+	"  6: Issues",
+	"  7: Projects",
 }
 
 // ─── App state ────────────────────────────────────────────────────────────────
@@ -161,6 +164,15 @@ type (
 	tagCommitsLoadedMsg struct {
 		tag     string
 		commits []*gitlab.CommitInfo
+	}
+	registryImagesLoadedMsg struct {
+		images []*gitlab.RegistryImage
+	}
+	registryTagsLoadedMsg struct {
+		tags []*gitlab.RegistryTag
+	}
+	registryTagDetailLoadedMsg struct {
+		detail *gitlab.RegistryTagDetail
 	}
 )
 
@@ -361,6 +373,16 @@ type Model struct {
 	// Edit Tag form
 	editTagName        string
 	editTagDescription textarea.Model
+
+	// Container Registry view
+	registryImages        []*gitlab.RegistryImage
+	registryCursor        int
+	registrySelectedImage *gitlab.RegistryImage // image whose tags are displayed
+	registryTags          []*gitlab.RegistryTag
+	registryTagCursor     int
+	registryTagDetail     *gitlab.RegistryTagDetail // detail for the selected tag
+	registryView          int                       // 0=image list, 1=tag list, 2=tag detail
+	registryTagSortDesc   bool                      // true=descending by creation date (default), false=ascending
 }
 
 const (
@@ -563,6 +585,7 @@ func New(cfg *config.Config, serverIdx int, client *gitlab.Client, project *gitl
 		createTagName:         ctname,
 		createTagMessage:      ctmsg,
 		editTagDescription:    etdesc,
+		registryTagSortDesc:   true,
 	}
 	return m
 }
@@ -871,6 +894,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cmdLoadPipelines(),
 			)
 		}
+		if m.tab == tabRegistry && m.registryView == 1 && m.registrySelectedImage != nil {
+			// After tag deletion: reload the tag list
+			return m, m.cmdLoadRegistryTags(m.registrySelectedImage.ID)
+		}
+		if m.tab == tabRegistry {
+			// After image deletion: reset to image list
+			m.registryView = 0
+			m.registrySelectedImage = nil
+			m.registryTags = nil
+			m.registryTagCursor = 0
+			m.registryTagDetail = nil
+		}
 		return m, m.reloadCurrent()
 
 	case youtrackTuiFinishedMsg:
@@ -973,6 +1008,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.tagCommitDiffFiles = nil
 		m.tagCommitDiffSHA = ""
 		m.state = stateDetail
+		return m, nil
+
+	case registryImagesLoadedMsg:
+		m.registryImages = msg.images
+		if m.state == stateLoading && m.tab == tabRegistry {
+			m.state = stateMain
+			m.registryCursor = 0
+		}
+		return m, nil
+
+	case registryTagsLoadedMsg:
+		m.registryTags = msg.tags
+		m.registryTagCursor = 0
+		m.sortRegistryTags()
+		if m.state == stateLoading && m.tab == tabRegistry {
+			m.state = stateMain
+		}
+		return m, nil
+
+	case registryTagDetailLoadedMsg:
+		m.registryTagDetail = msg.detail
+		if m.state == stateLoading && m.tab == tabRegistry {
+			m.state = stateMain
+		}
 		return m, nil
 
 
@@ -1184,6 +1243,21 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.loadMsg = "Loading issues..."
 				return m, m.cmdLoadIssues()
 			}
+		case stateMain:
+			// Registry back-navigation: ESC goes back one level
+			if m.tab == tabRegistry {
+				if m.registryView == 2 {
+					m.registryView = 1
+					m.registryTagDetail = nil
+					return m, nil
+				} else if m.registryView == 1 {
+					m.registryView = 0
+					m.registrySelectedImage = nil
+					m.registryTags = nil
+					m.registryTagCursor = 0
+					return m, nil
+				}
+			}
 		case stateServerSelect:
 			m.state = m.prevState
 		case stateCompareBranchSelect:
@@ -1284,12 +1358,18 @@ func (m Model) handleMainKey(key string) (tea.Model, tea.Cmd) {
 		m.pipelinePage = 1
 		return m, m.cmdLoadPipelines()
 	case "5":
+		m.tab = tabRegistry
+		m.projectSearch.Blur()
+		m.registryCursor = 0
+		m.registryView = 0
+		return m, m.cmdLoadRegistryImages()
+	case "6":
 		m.tab = tabIssues
 		m.projectSearch.Blur()
 		m.issueCursor = 0
 		m.issuePage = 1
 		return m, m.cmdLoadIssues()
-	case "6":
+	case "7":
 		m.tab = tabProjects
 		m.projectSearch.Focus()
 		m.projectCursor = 0
@@ -1337,6 +1417,18 @@ func (m Model) handleMainKey(key string) (tea.Model, tea.Cmd) {
 		} else if m.tab == tabTags && m.project != nil && m.tagCursor < len(m.tags) {
 			tag := m.tags[m.tagCursor]
 			return m.promptConfirm("Delete Tag", fmt.Sprintf("Are you sure you want to delete tag '%s'?", tag.Name), m.cmdDeleteTag(tag.Name))
+		} else if m.tab == tabRegistry && m.project != nil {
+			if m.registryView == 0 && m.registryCursor < len(m.registryImages) {
+				img := m.registryImages[m.registryCursor]
+				name := img.Name
+				if name == "" {
+					name = img.Path
+				}
+				return m.promptConfirm("Delete Registry Image", fmt.Sprintf("Delete image '%s' and all its tags?", name), m.cmdDeleteRegistryImage(img.ID))
+			} else if m.registryView == 1 && m.registryTagCursor < len(m.registryTags) {
+				tag := m.registryTags[m.registryTagCursor]
+				return m.promptConfirm("Delete Tag", fmt.Sprintf("Delete tag '%s'?", tag.Name), m.cmdDeleteRegistryTag(m.registrySelectedImage.ID, tag.Name))
+			}
 		}
 	case "b":
 		if m.tab == tabIssues && m.project != nil && m.issueCursor < len(m.issues) {
@@ -1408,6 +1500,11 @@ func (m Model) handleMainKey(key string) (tea.Model, tea.Cmd) {
 			m.issuePage = 1
 			m.issueCursor = 0
 			return m, m.cmdLoadIssues()
+		} else if m.tab == tabRegistry && m.registryView == 1 {
+			m.registryTagSortDesc = !m.registryTagSortDesc
+			m.sortRegistryTags()
+			m.registryTagCursor = 0
+			return m, nil
 		}
 	case "S":
 		// Switch server
@@ -3182,6 +3279,11 @@ func (m *Model) listLen() int {
 		return len(m.tags)
 	case tabPipelines:
 		return len(m.pipelines)
+	case tabRegistry:
+		if m.registryView == 1 {
+			return len(m.registryTags)
+		}
+		return len(m.registryImages)
 	case tabIssues:
 		return len(m.issues)
 	case tabProjects:
@@ -3200,6 +3302,11 @@ func (m *Model) cursor() int {
 		return m.tagCursor
 	case tabPipelines:
 		return m.pipelineCursor
+	case tabRegistry:
+		if m.registryView == 1 {
+			return m.registryTagCursor
+		}
+		return m.registryCursor
 	case tabIssues:
 		return m.issueCursor
 	case tabProjects:
@@ -3226,6 +3333,16 @@ func (m *Model) moveCursorDown() {
 	case tabPipelines:
 		if m.pipelineCursor < n-1 {
 			m.pipelineCursor++
+		}
+	case tabRegistry:
+		if m.registryView == 1 {
+			if m.registryTagCursor < n-1 {
+				m.registryTagCursor++
+			}
+		} else {
+			if m.registryCursor < n-1 {
+				m.registryCursor++
+			}
 		}
 	case tabIssues:
 		if m.issueCursor < n-1 {
@@ -3255,6 +3372,16 @@ func (m *Model) moveCursorUp() {
 	case tabPipelines:
 		if m.pipelineCursor > 0 {
 			m.pipelineCursor--
+		}
+	case tabRegistry:
+		if m.registryView == 1 {
+			if m.registryTagCursor > 0 {
+				m.registryTagCursor--
+			}
+		} else {
+			if m.registryCursor > 0 {
+				m.registryCursor--
+			}
 		}
 	case tabIssues:
 		if m.issueCursor > 0 {
@@ -3311,6 +3438,27 @@ func (m Model) openDetail() (Model, tea.Cmd) {
 				m.cmdLoadPipelineDetail(m.pipelineDetail.ID),
 				m.cmdLoadPipelineJobs(m.pipelineDetail.ID),
 			)
+		}
+	case tabRegistry:
+		if m.registryView == 0 && m.registryCursor < len(m.registryImages) {
+			// Open image -> show its tags
+			img := m.registryImages[m.registryCursor]
+			m.registrySelectedImage = img
+			m.registryTags = nil
+			m.registryTagCursor = 0
+			m.registryTagDetail = nil
+			m.registryView = 1
+			m.state = stateLoading
+			m.loadMsg = fmt.Sprintf("Loading tags for %s...", img.Name)
+			return m, m.cmdLoadRegistryTags(img.ID)
+		} else if m.registryView == 1 && m.registryTagCursor < len(m.registryTags) {
+			// Open tag -> show detail
+			tag := m.registryTags[m.registryTagCursor]
+			m.registryTagDetail = nil
+			m.registryView = 2
+			m.state = stateLoading
+			m.loadMsg = fmt.Sprintf("Loading tag detail for %s...", tag.Name)
+			return m, m.cmdLoadRegistryTagDetail(m.registrySelectedImage.ID, tag.Name)
 		}
 	case tabIssues:
 		if m.issueCursor < len(m.issues) {
@@ -3410,6 +3558,13 @@ func (m Model) resetCursorForTab(tab tabID) Model {
 	case tabPipelines:
 		m.pipelineCursor = 0
 		m.pipelinePage = 1
+	case tabRegistry:
+		m.registryCursor = 0
+		m.registryView = 0
+		m.registrySelectedImage = nil
+		m.registryTags = nil
+		m.registryTagCursor = 0
+		m.registryTagDetail = nil
 	case tabIssues:
 		m.issueCursor = 0
 		m.issuePage = 1
@@ -3436,6 +3591,8 @@ func (m Model) reloadCurrent() tea.Cmd {
 		return m.cmdLoadTags()
 	case tabPipelines:
 		return m.cmdLoadPipelines()
+	case tabRegistry:
+		return m.cmdLoadRegistryImages()
 	case tabIssues:
 		return m.cmdLoadIssues()
 	case tabProjects:
@@ -4260,7 +4417,7 @@ func (m Model) viewTabs() string {
 
 func (m Model) viewBody(bodyH int) string {
 	if m.project == nil && m.tab != tabProjects {
-		lines := []string{dimStyle.Render("No project selected. Press ") + accentStyle.Render("5") + dimStyle.Render(" to select a project.")}
+		lines := []string{dimStyle.Render("No project selected. Press ") + accentStyle.Render("7") + dimStyle.Render(" to select a project.")}
 		if m.startupWarn != "" {
 			lines = append(lines, "", warningStyle.Render("⚠ "+m.startupWarn))
 		}
@@ -4277,6 +4434,8 @@ func (m Model) viewBody(bodyH int) string {
 		return m.viewTagList(bodyH)
 	case tabPipelines:
 		return m.viewPipelineList()
+	case tabRegistry:
+		return m.viewRegistryBody(bodyH)
 	case tabIssues:
 		return m.viewIssueList()
 	case tabProjects:
@@ -6111,7 +6270,7 @@ func (m Model) viewConfirm() string {
 
 func (m Model) viewFooter() string {
 	hints := []string{
-		keyHint("Tab/1-6", "tabs"),
+		keyHint("Tab/1-7", "tabs"),
 		keyHint("↑↓", "navigate"),
 		keyHint("Enter", "open"),
 		keyHint("r", "refresh"),
@@ -6169,6 +6328,29 @@ func (m Model) viewFooter() string {
 			hints = append(hints, keyHint("c", "create tag"))
 			hints = append(hints, keyHint("e", "edit tag"))
 			hints = append(hints, keyHint("d", "delete"))
+		}
+	}
+
+	if m.tab == tabRegistry && m.project != nil {
+		switch m.registryView {
+		case 0:
+			hints = append(hints, keyHint("Enter", "view tags"))
+			if len(m.registryImages) > 0 {
+				hints = append(hints, keyHint("d", "delete image"))
+			}
+		case 1:
+			hints = append(hints, keyHint("Enter", "view tag info"))
+			if len(m.registryTags) > 0 {
+				hints = append(hints, keyHint("d", "delete tag"))
+			}
+			sortLabel := "sort:desc"
+			if !m.registryTagSortDesc {
+				sortLabel = "sort:asc"
+			}
+			hints = append(hints, keyHint("s", sortLabel))
+			hints = append(hints, keyHint("Esc", "back to images"))
+		case 2:
+			hints = append(hints, keyHint("Esc", "back to tags"))
 		}
 	}
 
@@ -8031,4 +8213,322 @@ func (m Model) viewEditTag() string {
 		Render(content)
 
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+}
+
+// ─── Container Registry ───────────────────────────────────────────────────────
+
+// viewRegistryBody dispatches to the appropriate registry sub-view.
+func (m Model) viewRegistryBody(bodyH int) string {
+	switch m.registryView {
+	case 1:
+		return m.viewRegistryTagList(bodyH)
+	case 2:
+		return m.viewRegistryTagDetail(bodyH)
+	default:
+		return m.viewRegistryImageList(bodyH)
+	}
+}
+
+// viewRegistryImageList renders the list of container images.
+func (m Model) viewRegistryImageList(bodyH int) string {
+	if len(m.registryImages) == 0 {
+		return dimStyle.Padding(2).Render("No container registry images found.")
+	}
+
+	header := lipgloss.NewStyle().
+		Foreground(colorMuted).
+		PaddingLeft(2).
+		Render(fmt.Sprintf("%-40s  %-6s  %-16s  %-40s",
+			"Name / Path", "Tags", "Created", "Location"))
+	header += "\n" + lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", m.width-2))
+
+	listH := bodyH - 3
+	if listH < 1 {
+		listH = 1
+	}
+	maxVisible := listH
+	start := m.registryCursor - maxVisible/2
+	if start < 0 {
+		start = 0
+	}
+	end := start + maxVisible
+	if end > len(m.registryImages) {
+		end = len(m.registryImages)
+		start = end - maxVisible
+		if start < 0 {
+			start = 0
+		}
+	}
+
+	var rows []string
+	for i := start; i < end; i++ {
+		img := m.registryImages[i]
+		selected := i == m.registryCursor
+
+		name := img.Name
+		if name == "" {
+			name = img.Path
+		}
+		tagsStr := fmt.Sprintf("%d", img.TagsCount)
+
+		line := fmt.Sprintf("%-40s  %-6s  %-16s  %-40s",
+			truncate(name, 40),
+			tagsStr,
+			truncate(img.CreatedAt, 16),
+			truncate(img.Location, 40),
+		)
+
+		if selected {
+			rows = append(rows, selectedStyle.Width(m.width-2).Render("▶ "+line))
+		} else {
+			rows = append(rows, normalItemStyle.Width(m.width-2).Render("  "+line))
+		}
+	}
+
+	return header + "\n" + strings.Join(rows, "\n")
+}
+
+func (m *Model) sortRegistryTags() {
+	sort.Slice(m.registryTags, func(i, j int) bool {
+		t1 := m.registryTags[i]
+		t2 := m.registryTags[j]
+		if t1.CreatedAtTime.IsZero() != t2.CreatedAtTime.IsZero() {
+			return !t1.CreatedAtTime.IsZero()
+		}
+		if m.registryTagSortDesc {
+			if !t1.CreatedAtTime.Equal(t2.CreatedAtTime) {
+				return t1.CreatedAtTime.After(t2.CreatedAtTime)
+			}
+			return t1.Name < t2.Name
+		}
+		if !t1.CreatedAtTime.Equal(t2.CreatedAtTime) {
+			return t1.CreatedAtTime.Before(t2.CreatedAtTime)
+		}
+		return t1.Name < t2.Name
+	})
+}
+
+// viewRegistryTagList renders the list of tags for the selected image.
+func (m Model) viewRegistryTagList(bodyH int) string {
+	imgName := ""
+	if m.registrySelectedImage != nil {
+		imgName = m.registrySelectedImage.Name
+		if imgName == "" {
+			imgName = m.registrySelectedImage.Path
+		}
+	}
+
+	headerLine := fmt.Sprintf("Tags for image: %s", imgName)
+	header := lipgloss.NewStyle().
+		Foreground(colorMuted).
+		PaddingLeft(2).
+		Render(headerLine)
+	header += "\n"
+	header += lipgloss.NewStyle().
+		Foreground(colorMuted).
+		PaddingLeft(2).
+		Render(fmt.Sprintf("%-25s  %-16s  %-10s  %-40s", "Tag Name", "Created", "Size", "Path (image:tag)"))
+	header += "\n" + lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", m.width-2))
+
+	if len(m.registryTags) == 0 {
+		return header + "\n" + dimStyle.Padding(2).Render("No tags found for this image.")
+	}
+
+	listH := bodyH - 4
+	if listH < 1 {
+		listH = 1
+	}
+	maxVisible := listH
+	start := m.registryTagCursor - maxVisible/2
+	if start < 0 {
+		start = 0
+	}
+	end := start + maxVisible
+	if end > len(m.registryTags) {
+		end = len(m.registryTags)
+		start = end - maxVisible
+		if start < 0 {
+			start = 0
+		}
+	}
+
+	var rows []string
+	for i := start; i < end; i++ {
+		tag := m.registryTags[i]
+		selected := i == m.registryTagCursor
+
+		path := tag.Path
+		if path == "" {
+			path = tag.Location
+		}
+
+		createdStr := tag.CreatedAt
+		if createdStr == "" {
+			createdStr = "-"
+		}
+
+		sizeStr := "-"
+		if tag.TotalSize > 0 {
+			mb := float64(tag.TotalSize) / 1024 / 1024
+			if mb >= 1 {
+				sizeStr = fmt.Sprintf("%.1f MB", mb)
+			} else {
+				kb := float64(tag.TotalSize) / 1024
+				sizeStr = fmt.Sprintf("%.1f KB", kb)
+			}
+		}
+
+		line := fmt.Sprintf("%-25s  %-16s  %-10s  %-40s",
+			truncate(tag.Name, 25),
+			truncate(createdStr, 16),
+			truncate(sizeStr, 10),
+			truncate(path, 40),
+		)
+
+		if selected {
+			rows = append(rows, selectedStyle.Width(m.width-2).Render("▶ "+line))
+		} else {
+			rows = append(rows, normalItemStyle.Width(m.width-2).Render("  "+line))
+		}
+	}
+
+	return header + "\n" + strings.Join(rows, "\n")
+}
+
+// viewRegistryTagDetail renders detailed information about a specific tag.
+func (m Model) viewRegistryTagDetail(bodyH int) string {
+	imgName := ""
+	tagName := ""
+	if m.registrySelectedImage != nil {
+		imgName = m.registrySelectedImage.Name
+		if imgName == "" {
+			imgName = m.registrySelectedImage.Path
+		}
+	}
+	if len(m.registryTags) > 0 && m.registryTagCursor < len(m.registryTags) {
+		tagName = m.registryTags[m.registryTagCursor].Name
+	}
+
+	header := lipgloss.NewStyle().
+		Foreground(colorMuted).
+		PaddingLeft(2).
+		Render(fmt.Sprintf("Tag Detail: %s / %s", imgName, tagName))
+	header += "\n" + lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", m.width-2))
+
+	if m.registryTagDetail == nil {
+		return header + "\n" + dimStyle.Padding(2).Render("Loading tag details...")
+	}
+
+	td := m.registryTagDetail
+
+	sizeStr := "unknown"
+	if td.TotalSize > 0 {
+		mb := float64(td.TotalSize) / 1024 / 1024
+		if mb >= 1 {
+			sizeStr = fmt.Sprintf("%.1f MB", mb)
+		} else {
+			kb := float64(td.TotalSize) / 1024
+			sizeStr = fmt.Sprintf("%.1f KB", kb)
+		}
+	}
+
+	labelStyle := dimStyle
+	valueStyle := lipgloss.NewStyle().Foreground(colorAccent)
+
+	row := func(label, value string) string {
+		return fmt.Sprintf("  %s  %s",
+			labelStyle.Width(18).Render(label+":"),
+			valueStyle.Render(value),
+		)
+	}
+
+	var lines []string
+	lines = append(lines, "")
+	lines = append(lines, row("Name", td.Name))
+	lines = append(lines, row("Path", td.Path))
+	lines = append(lines, row("Location", td.Location))
+	lines = append(lines, row("Created", td.CreatedAt))
+	lines = append(lines, row("Size", sizeStr))
+	lines = append(lines, row("Digest", truncate(td.Digest, m.width-30)))
+	if td.Revision != "" {
+		lines = append(lines, row("Revision", td.Revision))
+	}
+	if td.ShortRevision != "" {
+		lines = append(lines, row("Short Rev", td.ShortRevision))
+	}
+	if td.MediaType != "" {
+		lines = append(lines, row("Media Type", td.MediaType))
+	}
+
+	return header + "\n" + strings.Join(lines, "\n")
+}
+
+// ─── Registry commands ────────────────────────────────────────────────────────
+
+func (m Model) cmdLoadRegistryImages() tea.Cmd {
+	if m.project == nil {
+		return nil
+	}
+	pid := m.project.ID
+	return func() tea.Msg {
+		images, err := m.client.ListRegistryImages(pid)
+		if err != nil {
+			return errMsg{err}
+		}
+		return registryImagesLoadedMsg{images}
+	}
+}
+
+func (m Model) cmdLoadRegistryTags(repositoryID int) tea.Cmd {
+	if m.project == nil {
+		return nil
+	}
+	pid := m.project.ID
+	return func() tea.Msg {
+		tags, err := m.client.ListRegistryTags(pid, repositoryID)
+		if err != nil {
+			return errMsg{err}
+		}
+		return registryTagsLoadedMsg{tags}
+	}
+}
+
+func (m Model) cmdLoadRegistryTagDetail(repositoryID int, tagName string) tea.Cmd {
+	if m.project == nil {
+		return nil
+	}
+	pid := m.project.ID
+	return func() tea.Msg {
+		detail, err := m.client.GetRegistryTagDetail(pid, repositoryID, tagName)
+		if err != nil {
+			return errMsg{err}
+		}
+		return registryTagDetailLoadedMsg{detail}
+	}
+}
+
+func (m Model) cmdDeleteRegistryImage(repositoryID int) tea.Cmd {
+	if m.project == nil {
+		return nil
+	}
+	pid := m.project.ID
+	return func() tea.Msg {
+		if err := m.client.DeleteRegistryImage(pid, repositoryID); err != nil {
+			return errMsg{err}
+		}
+		return actionDoneMsg{"Registry image deleted."}
+	}
+}
+
+func (m Model) cmdDeleteRegistryTag(repositoryID int, tagName string) tea.Cmd {
+	if m.project == nil {
+		return nil
+	}
+	pid := m.project.ID
+	return func() tea.Msg {
+		if err := m.client.DeleteRegistryTag(pid, repositoryID, tagName); err != nil {
+			return errMsg{err}
+		}
+		return actionDoneMsg{"Registry tag deleted."}
+	}
 }
