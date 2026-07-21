@@ -1,4 +1,14 @@
 
+## [0.6.8] - 2026-07-21
+
+### Features
+
+- Add Container Registry tab with tag details, sorting, and deletion ([bdc99df](https://github.com/nospor/gitlab-tui/commit/bdc99dfe41937648d38bdd9782eefce06b135e49))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.6.7 [skip ci] ([ad76736](https://github.com/nospor/gitlab-tui/commit/ad76736398b2d22c1ea67b5a892e45a983c2a76f))
+
 ## [0.6.7] - 2026-07-20
 
 ### Features
