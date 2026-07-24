@@ -1,4 +1,14 @@
 
+## [0.6.9] - 2026-07-24
+
+### Features
+
+- *(tui)* Dynamically truncate changed file paths in diff view based on panel width ([12bc530](https://github.com/nospor/gitlab-tui/commit/12bc53045e42faa6d5a5a1e8fda5fe591123e898))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.6.8 [skip ci] ([c84a909](https://github.com/nospor/gitlab-tui/commit/c84a9090fb1f80d00f2737fed7e1bfcf2e70c39e))
+
 ## [0.6.8] - 2026-07-21
 
 ### Features
