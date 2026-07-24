@@ -4748,9 +4748,11 @@ func (m Model) viewDiffPanel(w, h int) string {
 	for i := startIdx; i < endIdx; i++ {
 		f := m.mrDiffFiles[i]
 		name := f.NewPath
-		if len(name) > 35 {
-			name = "…" + name[len(name)-34:]
+		limit := w - 7 - len(fmt.Sprintf("+%d -%d", f.Added, f.Deleted))
+		if limit < 35 {
+			limit = 35
 		}
+		name = truncatePath(name, limit)
 		label := fmt.Sprintf("+%d -%d %s", f.Added, f.Deleted, name)
 		if i == m.mrDiffFileIdx {
 			fileTabs = append(fileTabs, accentStyle.Render(" ▶ "+label))
@@ -6613,6 +6615,16 @@ func truncate(s string, n int) string {
 	return s[:n-1] + "…"
 }
 
+func truncatePath(path string, limit int) string {
+	if len(path) <= limit {
+		return path
+	}
+	if limit <= 1 {
+		return "…"
+	}
+	return "…" + path[len(path)-(limit-1):]
+}
+
 type youtrackTuiFinishedMsg struct {
 	Err error
 }
@@ -7301,9 +7313,11 @@ func (m Model) viewBranchCommitDiffPanel(w, h int) string {
 	for i := startIdx; i < endIdx; i++ {
 		f := m.branchCommitDiffFiles[i]
 		name := f.NewPath
-		if len(name) > 35 {
-			name = "…" + name[len(name)-34:]
+		limit := w - 7 - len(fmt.Sprintf("+%d -%d", f.Added, f.Deleted))
+		if limit < 35 {
+			limit = 35
 		}
+		name = truncatePath(name, limit)
 		label := fmt.Sprintf("+%d -%d %s", f.Added, f.Deleted, name)
 		if i == m.branchCommitDiffFileIdx {
 			fileTabs = append(fileTabs, accentStyle.Render(" ▶ "+label))
@@ -7921,9 +7935,11 @@ func (m Model) viewTagCommitDiffPanel(w, h int) string {
 	for i := startIdx; i < endIdx; i++ {
 		f := m.tagCommitDiffFiles[i]
 		name := f.NewPath
-		if len(name) > 35 {
-			name = "…" + name[len(name)-34:]
+		limit := w - 7 - len(fmt.Sprintf("+%d -%d", f.Added, f.Deleted))
+		if limit < 35 {
+			limit = 35
 		}
+		name = truncatePath(name, limit)
 		label := fmt.Sprintf("+%d -%d %s", f.Added, f.Deleted, name)
 		if i == m.tagCommitDiffFileIdx {
 			fileTabs = append(fileTabs, accentStyle.Render(" ▶ "+label))
