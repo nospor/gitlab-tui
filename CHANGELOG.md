@@ -1,4 +1,14 @@
 
+## [0.7.1] - 2026-08-12
+
+### Features
+
+- *(tui)* Include YouTrack links from MR and issue titles in link list ([a88c010](https://github.com/nospor/gitlab-tui/commit/a88c01010ba9d52bc24e09374422a9111b980f27))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.7.0 [skip ci] ([ac4d863](https://github.com/nospor/gitlab-tui/commit/ac4d86343837a298cd663fade55786688aba3d96))
+
 ## [0.7.0] - 2026-08-12
 
 ### Features
