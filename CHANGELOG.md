@@ -1,4 +1,14 @@
 
+## [0.7.0] - 2026-08-12
+
+### Features
+
+- *(tui)* Show voter names on MR and issue detail views ([8d1bbfc](https://github.com/nospor/gitlab-tui/commit/8d1bbfc2c9c2980814125a0cff79817a4fb4d7cf))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.6.9 [skip ci] ([0228584](https://github.com/nospor/gitlab-tui/commit/02285843165e0718d4e22c486d55a16310419690))
+
 ## [0.6.9] - 2026-07-24
 
 ### Features
