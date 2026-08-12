@@ -69,6 +69,74 @@ func TestExtractYouTrackLinks(t *testing.T) {
 	}
 }
 
+func TestCollectLinksForDetailYouTrackTitle(t *testing.T) {
+	cfg := &config.Config{
+		YouTrackServers: []config.YouTrackServer{
+			{
+				Name:     "Mediatel YouTrack",
+				URL:      "https://youtrack.mediatel.co.uk/",
+				Projects: []string{"MTEL", "BARB"},
+			},
+		},
+	}
+
+	mtelTitle := "https://youtrack.mediatel.co.uk/issue/MTEL-999"
+	mtelDesc := "https://youtrack.mediatel.co.uk/issue/MTEL-42"
+
+	checkLinks := func(t *testing.T, tab string, items []linkItem, wantKeys []string) {
+		t.Helper()
+		urls := map[string]bool{}
+		for _, item := range items {
+			urls[item.URL] = true
+		}
+		for _, want := range wantKeys {
+			if !urls[want] {
+				t.Errorf("%s: missing link %s in %v", tab, want, items)
+			}
+		}
+	}
+
+	// MR: ticket only in title, plus duplicate ticket in title and description
+	m := Model{
+		cfg:   cfg,
+		tab:   tabMRs,
+		state: stateDetail,
+		mrDetail: &gitlab.MRInfo{
+			IID:         1,
+			Title:       "Fix MTEL-999 and closes MTEL-42",
+			Description: "Refs MTEL-42",
+			WebURL:      "https://gitlab.com/group/proj/-/merge_requests/1",
+		},
+	}
+	items := m.collectLinksForDetail()
+	checkLinks(t, "MR title", items, []string{mtelTitle, mtelDesc})
+	// MTEL-42 in both title and description must appear only once
+	count := 0
+	for _, item := range items {
+		if item.URL == mtelDesc {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("MR: MTEL-42 duplicated, got %d occurrences", count)
+	}
+
+	// Issue: ticket only in title
+	im := Model{
+		cfg:   cfg,
+		tab:   tabIssues,
+		state: stateDetail,
+		issueDetail: &gitlab.IssueInfo{
+			IID:         1,
+			Title:       "Handle BARB-123 on login",
+			Description: "Plain description",
+			WebURL:      "https://gitlab.com/group/proj/-/issues/1",
+		},
+	}
+	iItems := im.collectLinksForDetail()
+	checkLinks(t, "Issue title", iItems, []string{"https://youtrack.mediatel.co.uk/issue/BARB-123"})
+}
+
 func TestInitTheme(t *testing.T) {
 	// Test Catppuccin theme (default)
 	InitTheme("catppuccin")

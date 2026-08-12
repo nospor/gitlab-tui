@@ -6735,6 +6735,9 @@ func (m Model) collectLinksForDetail() []linkItem {
 			return nil
 		}
 		add("🔗 MR on GitLab", m.mrDetail.WebURL)
+		for _, y := range extractYouTrackLinks(m.mrDetail.Title, m.cfg) {
+			add("🎫 "+y.Key, y.URL)
+		}
 		for _, u := range extractURLs(m.mrDetail.Description) {
 			add("📎 "+u, u)
 		}
@@ -6761,6 +6764,9 @@ func (m Model) collectLinksForDetail() []linkItem {
 			return nil
 		}
 		add("🔗 Issue on GitLab", m.issueDetail.WebURL)
+		for _, y := range extractYouTrackLinks(m.issueDetail.Title, m.cfg) {
+			add("🎫 "+y.Key, y.URL)
+		}
 		for _, u := range extractURLs(m.issueDetail.Description) {
 			add("📎 "+u, u)
 		}
