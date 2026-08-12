@@ -5031,6 +5031,11 @@ func (m Model) viewMRDetailLinesForWidth(w int) ([]string, []string) {
 		"",
 		lipgloss.NewStyle().PaddingLeft(2).Render(
 			dimStyle.Render(fmt.Sprintf("👍 %d  👎 %d  💬 %d", mr.Upvotes, mr.Downvotes, mr.UserNotesCount))),
+	)
+	if vn := voterNames(mr.Upvoters, mr.Downvoters, inner); vn != "" {
+		headerRaw = append(headerRaw, lipgloss.NewStyle().PaddingLeft(2).Render(vn))
+	}
+	headerRaw = append(headerRaw,
 		"",
 		lipgloss.NewStyle().PaddingLeft(2).Render(
 			lipgloss.NewStyle().Foreground(colorInfo).Render("🔗 "+mr.WebURL)),
@@ -5464,6 +5469,11 @@ func (m Model) viewIssueDetailLinesForWidth(w int) ([]string, []string) {
 		"",
 		lipgloss.NewStyle().PaddingLeft(2).Render(
 			dimStyle.Render(fmt.Sprintf("👍 %d  👎 %d  💬 %d", iss.Upvotes, iss.Downvotes, iss.UserNotesCount))),
+	)
+	if vn := voterNames(iss.Upvoters, iss.Downvoters, inner); vn != "" {
+		headerRaw = append(headerRaw, lipgloss.NewStyle().PaddingLeft(2).Render(vn))
+	}
+	headerRaw = append(headerRaw,
 		"",
 		lipgloss.NewStyle().PaddingLeft(2).Render(
 			lipgloss.NewStyle().Foreground(colorInfo).Render("🔗 "+iss.WebURL)),
@@ -6606,6 +6616,20 @@ func (m Model) cmdOpenTraceInEditor() tea.Cmd {
 		os.Remove(tmpFile.Name())
 		return youtrackTuiFinishedMsg{Err: err}
 	})
+}
+
+func voterNames(upvoters, downvoters []string, width int) string {
+	if len(upvoters) == 0 && len(downvoters) == 0 {
+		return ""
+	}
+	var parts []string
+	if len(upvoters) > 0 {
+		parts = append(parts, "👍 "+strings.Join(upvoters, ", "))
+	}
+	if len(downvoters) > 0 {
+		parts = append(parts, "👎 "+strings.Join(downvoters, ", "))
+	}
+	return dimStyle.Render(truncate(strings.Join(parts, "   "), width))
 }
 
 func truncate(s string, n int) string {

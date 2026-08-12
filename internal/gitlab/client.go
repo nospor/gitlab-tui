@@ -484,6 +484,8 @@ type MRInfo struct {
 	Upvotes        int
 	Downvotes      int
 	UserNotesCount int
+	Upvoters       []string
+	Downvoters     []string
 	Labels         []string
 	Draft          bool
 	Description             string
@@ -597,7 +599,48 @@ func (c *Client) GetMR(projectID, mriid int) (*MRInfo, error) {
 	for _, r := range mr.Reviewers {
 		info.Reviewers = append(info.Reviewers, r.Username)
 	}
+	info.Upvoters, info.Downvoters = c.MRVoters(projectID, mriid)
 	return info, nil
+}
+
+// MRVoters fetches the usernames of users who gave thumbsup/thumbsdown
+// award emoji on a merge request.
+func (c *Client) MRVoters(projectID, mriid int) (up, down []string) {
+	opts := &gl.ListAwardEmojiOptions{
+		ListOptions: gl.ListOptions{
+			Page:    1,
+			PerPage: 100,
+		},
+	}
+	var all []*gl.AwardEmoji
+	for {
+		emojis, resp, err := c.raw.AwardEmoji.ListMergeRequestAwardEmoji(projectID, int64(mriid), opts)
+		if err != nil {
+			return nil, nil
+		}
+		all = append(all, emojis...)
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = int64(resp.NextPage)
+	}
+	return splitVoters(all)
+}
+
+// splitVoters splits award emoji into thumbsup/thumbsdown voter usernames.
+func splitVoters(emojis []*gl.AwardEmoji) (up, down []string) {
+	for _, e := range emojis {
+		if e == nil || e.User.Username == "" {
+			continue
+		}
+		switch e.Name {
+		case "thumbsup":
+			up = append(up, e.User.Username)
+		case "thumbsdown":
+			down = append(down, e.User.Username)
+		}
+	}
+	return up, down
 }
 
 
@@ -956,6 +999,8 @@ type IssueInfo struct {
 	Assignees      []string
 	Upvotes        int
 	Downvotes      int
+	Upvoters       []string
+	Downvoters     []string
 	UserNotesCount int
 }
 
@@ -1050,7 +1095,32 @@ func (c *Client) GetIssue(projectID, issueIID int) (*IssueInfo, error) {
 	for _, a := range iss.Assignees {
 		info.Assignees = append(info.Assignees, a.Username)
 	}
+	info.Upvoters, info.Downvoters = c.IssueVoters(projectID, issueIID)
 	return info, nil
+}
+
+// IssueVoters fetches the usernames of users who gave thumbsup/thumbsdown
+// award emoji on an issue.
+func (c *Client) IssueVoters(projectID, issueIID int) (up, down []string) {
+	opts := &gl.ListAwardEmojiOptions{
+		ListOptions: gl.ListOptions{
+			Page:    1,
+			PerPage: 100,
+		},
+	}
+	var all []*gl.AwardEmoji
+	for {
+		emojis, resp, err := c.raw.AwardEmoji.ListIssueAwardEmoji(projectID, int64(issueIID), opts)
+		if err != nil {
+			return nil, nil
+		}
+		all = append(all, emojis...)
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = int64(resp.NextPage)
+	}
+	return splitVoters(all)
 }
 
 // CreateIssueOptions holds optional parameters for creating an issue.

@@ -808,3 +808,56 @@ func TestTagsTab(t *testing.T) {
 	}
 }
 
+
+func TestVoterNames(t *testing.T) {
+	tests := []struct {
+		name       string
+		upvoters   []string
+		downvoters []string
+		width      int
+		wantPrefix string
+	}{
+		{
+			name:       "no voters",
+			upvoters:   nil,
+			downvoters: nil,
+			width:      100,
+			wantPrefix: "",
+		},
+		{
+			name:       "only upvoters",
+			upvoters:   []string{"alice", "bob"},
+			downvoters: nil,
+			width:      100,
+			wantPrefix: "👍 alice, bob",
+		},
+		{
+			name:       "both directions",
+			upvoters:   []string{"alice"},
+			downvoters: []string{"carol"},
+			width:      100,
+			wantPrefix: "👍 alice   👎 carol",
+		},
+		{
+			name:       "truncated at width",
+			upvoters:   []string{"alice", "bob", "charlie", "dave"},
+			downvoters: nil,
+			width:      10,
+			wantPrefix: "👍 alic",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := voterNames(tc.upvoters, tc.downvoters, tc.width)
+			if tc.wantPrefix == "" {
+				if got != "" {
+					t.Errorf("voterNames() = %q, want empty", got)
+				}
+				return
+			}
+			if !strings.HasPrefix(got, tc.wantPrefix) {
+				t.Errorf("voterNames() = %q, want prefix %q", got, tc.wantPrefix)
+			}
+		})
+	}
+}
