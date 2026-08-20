@@ -1,4 +1,14 @@
 
+## [0.7.2] - 2026-08-20
+
+### Bug Fixes
+
+- Fetch MR diffs via Gitaly to stop large files showing +0 -0 ([f7e234d](https://github.com/nospor/gitlab-tui/commit/f7e234d21756dc730093da3d3e5e121dd62977b0))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.7.1 [skip ci] ([5e90f52](https://github.com/nospor/gitlab-tui/commit/5e90f5213adb97521c0d9d5a0d438c68f0b97517))
+
 ## [0.7.1] - 2026-08-12
 
 ### Features
