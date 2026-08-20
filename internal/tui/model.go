@@ -4748,12 +4748,13 @@ func (m Model) viewDiffPanel(w, h int) string {
 	for i := startIdx; i < endIdx; i++ {
 		f := m.mrDiffFiles[i]
 		name := f.NewPath
-		limit := w - 7 - len(fmt.Sprintf("+%d -%d", f.Added, f.Deleted))
+		counts := diffCounts(f)
+		limit := w - 7 - len(counts)
 		if limit < 35 {
 			limit = 35
 		}
 		name = truncatePath(name, limit)
-		label := fmt.Sprintf("+%d -%d %s", f.Added, f.Deleted, name)
+		label := fmt.Sprintf("%s %s", counts, name)
 		if i == m.mrDiffFileIdx {
 			fileTabs = append(fileTabs, accentStyle.Render(" ▶ "+label))
 		} else {
@@ -4772,6 +4773,11 @@ func (m Model) viewDiffPanel(w, h int) string {
 	// Current file diff lines
 	f := m.mrDiffFiles[m.mrDiffFileIdx]
 	renderedCount := 0
+
+	if len(f.Lines) == 0 {
+		lines = append(lines, dimStyle.Render("  (diff unavailable — file is too large or collapsed)"))
+		renderedCount++
+	}
 
 	for i := m.mrDiffScrollOffset; i < len(f.Lines) && renderedCount < diffHeight; i++ {
 		dl := f.Lines[i]
@@ -6639,6 +6645,16 @@ func truncate(s string, n int) string {
 	return s[:n-1] + "…"
 }
 
+// diffCounts renders a "+N -M" badge for a file. When the file's diff content
+// is unavailable (collapsed / too large / overflow) it shows "+? -?" instead of
+// a misleading "+0 -0" that makes the file look unchanged.
+func diffCounts(f *gitlab.DiffFile) string {
+	if len(f.Lines) == 0 && (f.NewFile || f.DeletedFile || f.RenamedFile || f.TooLarge || f.Collapsed || f.Overflow || f.AMode != f.BMode) {
+		return "+? -?"
+	}
+	return fmt.Sprintf("+%d -%d", f.Added, f.Deleted)
+}
+
 func truncatePath(path string, limit int) string {
 	if len(path) <= limit {
 		return path
@@ -7343,12 +7359,13 @@ func (m Model) viewBranchCommitDiffPanel(w, h int) string {
 	for i := startIdx; i < endIdx; i++ {
 		f := m.branchCommitDiffFiles[i]
 		name := f.NewPath
-		limit := w - 7 - len(fmt.Sprintf("+%d -%d", f.Added, f.Deleted))
+		counts := diffCounts(f)
+		limit := w - 7 - len(counts)
 		if limit < 35 {
 			limit = 35
 		}
 		name = truncatePath(name, limit)
-		label := fmt.Sprintf("+%d -%d %s", f.Added, f.Deleted, name)
+		label := fmt.Sprintf("%s %s", counts, name)
 		if i == m.branchCommitDiffFileIdx {
 			fileTabs = append(fileTabs, accentStyle.Render(" ▶ "+label))
 		} else {
@@ -7367,6 +7384,11 @@ func (m Model) viewBranchCommitDiffPanel(w, h int) string {
 	// Current file diff lines
 	f := m.branchCommitDiffFiles[m.branchCommitDiffFileIdx]
 	renderedCount := 0
+
+	if len(f.Lines) == 0 {
+		lines = append(lines, dimStyle.Render("  (diff unavailable — file is too large or collapsed)"))
+		renderedCount++
+	}
 
 	for i := m.branchCommitDiffScrollOffset; i < len(f.Lines) && renderedCount < diffHeight; i++ {
 		dl := f.Lines[i]
@@ -7965,12 +7987,13 @@ func (m Model) viewTagCommitDiffPanel(w, h int) string {
 	for i := startIdx; i < endIdx; i++ {
 		f := m.tagCommitDiffFiles[i]
 		name := f.NewPath
-		limit := w - 7 - len(fmt.Sprintf("+%d -%d", f.Added, f.Deleted))
+		counts := diffCounts(f)
+		limit := w - 7 - len(counts)
 		if limit < 35 {
 			limit = 35
 		}
 		name = truncatePath(name, limit)
-		label := fmt.Sprintf("+%d -%d %s", f.Added, f.Deleted, name)
+		label := fmt.Sprintf("%s %s", counts, name)
 		if i == m.tagCommitDiffFileIdx {
 			fileTabs = append(fileTabs, accentStyle.Render(" ▶ "+label))
 		} else {
@@ -7990,6 +8013,11 @@ func (m Model) viewTagCommitDiffPanel(w, h int) string {
 	if m.tagCommitDiffFileIdx < len(m.tagCommitDiffFiles) {
 		f := m.tagCommitDiffFiles[m.tagCommitDiffFileIdx]
 		renderedCount := 0
+
+		if len(f.Lines) == 0 {
+			lines = append(lines, dimStyle.Render("  (diff unavailable — file is too large or collapsed)"))
+			renderedCount++
+		}
 
 		for i := m.tagCommitDiffScrollOffset; i < len(f.Lines) && renderedCount < diffHeight; i++ {
 			dl := f.Lines[i]

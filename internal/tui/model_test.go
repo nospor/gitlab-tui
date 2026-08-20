@@ -929,3 +929,49 @@ func TestVoterNames(t *testing.T) {
 		})
 	}
 }
+
+func TestDiffCounts(t *testing.T) {
+	tests := []struct {
+		name string
+		f    *gitlab.DiffFile
+		want string
+	}{
+		{
+			name: "normal file shows counts",
+			f:    &gitlab.DiffFile{Added: 536, Deleted: 3, Lines: []gitlab.DiffLine{{}}},
+			want: "+536 -3",
+		},
+		{
+			name: "new file with no diff content is flagged",
+			f:    &gitlab.DiffFile{NewFile: true},
+			want: "+? -?",
+		},
+		{
+			name: "collapsed file is flagged",
+			f:    &gitlab.DiffFile{Collapsed: true},
+			want: "+? -?",
+		},
+		{
+			name: "too large file is flagged",
+			f:    &gitlab.DiffFile{TooLarge: true},
+			want: "+? -?",
+		},
+		{
+			name: "overflow file is flagged",
+			f:    &gitlab.DiffFile{Overflow: true},
+			want: "+? -?",
+		},
+		{
+			name: "mode-only change with content shows counts",
+			f:    &gitlab.DiffFile{AMode: "100644", BMode: "100755", Lines: []gitlab.DiffLine{{}}},
+			want: "+0 -0",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := diffCounts(tc.f); got != tc.want {
+				t.Errorf("diffCounts() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

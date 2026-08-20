@@ -24,13 +24,19 @@ type DiffLine struct {
 
 // DiffFile represents a single changed file in an MR.
 type DiffFile struct {
-	OldPath   string
-	NewPath   string
-	Added     int
-	Deleted   int
-	Lines     []DiffLine
-	TooLarge  bool // diff was too large to return inline
-	Collapsed bool // diff was collapsed by GitLab
+	OldPath     string
+	NewPath     string
+	Added       int
+	Deleted     int
+	Lines       []DiffLine
+	TooLarge    bool // diff was too large to return inline
+	Collapsed   bool // diff was collapsed by GitLab
+	Overflow    bool // MR diff limits were hit for the file
+	NewFile     bool
+	DeletedFile bool
+	RenamedFile bool
+	AMode       string
+	BMode       string
 }
 
 // GetMRDiffs fetches the list of changed files (with diff hunks) for an MR.
@@ -57,10 +63,15 @@ func (c *Client) GetMRDiffs(projectID, mriid int) ([]*DiffFile, error) {
 
 		for _, d := range diffs {
 			f := &DiffFile{
-				OldPath:   d.OldPath,
-				NewPath:   d.NewPath,
-				TooLarge:  d.TooLarge,
-				Collapsed: d.Collapsed,
+				OldPath:     d.OldPath,
+				NewPath:     d.NewPath,
+				TooLarge:    d.TooLarge,
+				Collapsed:   d.Collapsed,
+				NewFile:     d.NewFile,
+				DeletedFile: d.DeletedFile,
+				RenamedFile: d.RenamedFile,
+				AMode:       d.AMode,
+				BMode:       d.BMode,
 			}
 			lines := parseDiffLines(d.Diff)
 			for _, l := range lines {
@@ -83,7 +94,8 @@ func (c *Client) GetMRDiffs(projectID, mriid int) ([]*DiffFile, error) {
 }
 
 type mrChangesResponse struct {
-	Changes []struct {
+	Overflow bool `json:"overflow"`
+	Changes  []struct {
 		OldPath     string `json:"old_path"`
 		NewPath     string `json:"new_path"`
 		AMode       string `json:"a_mode"`
@@ -97,9 +109,17 @@ type mrChangesResponse struct {
 	} `json:"changes"`
 }
 
+// accessRawDiffsOpt opts into Gitaly-backed diffs on the MR changes endpoint.
+type accessRawDiffsOpt struct {
+	AccessRawDiffs bool `url:"access_raw_diffs"`
+}
+
 func (c *Client) getMRChangesFallback(projectID, mriid int) ([]*DiffFile, error) {
+	// access_raw_diffs fetches the diffs through Gitaly, which is not subject
+	// to the database-backed size limits that otherwise leave the "diff" field
+	// empty for large files (making them show up as +0 -0).
 	path := fmt.Sprintf("projects/%d/merge_requests/%d/changes", projectID, mriid)
-	req, err := c.raw.NewRequest(http.MethodGet, path, nil, nil)
+	req, err := c.raw.NewRequest(http.MethodGet, path, accessRawDiffsOpt{AccessRawDiffs: true}, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating raw request for fallback: %w", err)
 	}
@@ -113,10 +133,16 @@ func (c *Client) getMRChangesFallback(projectID, mriid int) ([]*DiffFile, error)
 	var result []*DiffFile
 	for _, d := range respObj.Changes {
 		f := &DiffFile{
-			OldPath:   d.OldPath,
-			NewPath:   d.NewPath,
-			TooLarge:  d.TooLarge,
-			Collapsed: d.Collapsed,
+			OldPath:     d.OldPath,
+			NewPath:     d.NewPath,
+			TooLarge:    d.TooLarge,
+			Collapsed:   d.Collapsed,
+			Overflow:    respObj.Overflow,
+			NewFile:     d.NewFile,
+			DeletedFile: d.DeletedFile,
+			RenamedFile: d.RenamedFile,
+			AMode:       d.AMode,
+			BMode:       d.BMode,
 		}
 		lines := parseDiffLines(d.Diff)
 		for _, l := range lines {
