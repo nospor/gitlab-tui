@@ -1,4 +1,18 @@
 
+## [0.7.3] - 2026-08-24
+
+### Features
+
+- *(tui)* Add yank popup for copying MR, issue, and pipeline details ([7036646](https://github.com/nospor/gitlab-tui/commit/70366465aa24822d60ce9b58f1440ed146244e94))
+
+### Bug Fixes
+
+- *(tui)* Keep source branch name verbatim when pre-filling new MR title ([7994cc1](https://github.com/nospor/gitlab-tui/commit/7994cc16a3c0b14e78db402b1cbaeb38f3b801f7))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.7.2 [skip ci] ([8be56bb](https://github.com/nospor/gitlab-tui/commit/8be56bb150f85bce6d8e5d0394f2ee61f4f41398))
+
 ## [0.7.2] - 2026-08-20
 
 ### Bug Fixes
