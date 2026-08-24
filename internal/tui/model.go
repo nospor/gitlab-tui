@@ -2330,9 +2330,8 @@ func (m Model) handleCreateMRKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.createMRTargetBranch = tgtList[m.createMRTgtCursor]
 				m.createMRStep = 2
 				m.createMRFormField = mrFieldTitle
-				// Pre-fill title from source branch name
-				suggested := strings.NewReplacer("-", " ", "_", " ").Replace(m.createMRSourceBranch)
-				m.createMRTitle.SetValue(suggested)
+				// Pre-fill title from source branch name (kept verbatim)
+				m.createMRTitle.SetValue(m.createMRSourceBranch)
 				titleCmd := m.createMRTitle.Focus()
 				m.createMRTitle.CursorEnd()
 				// Also kick off last-commit fetch to pre-fill description
