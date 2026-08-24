@@ -16,6 +16,7 @@ Built with [BubbleTea](https://github.com/charmbracelet/bubbletea) and the offic
 - 🔌 **Multiple servers** — configure several GitLab instances, switch between them
 - 🧠 **Auto-detection** — detects server and project from the current directory's `git remote`
 - 🔗 **Open links** — press `o` on MR, pipeline, or issue detail to see all links (WebURL, links in descriptions and comments) and open them in your browser
+- 📋 **Yank to clipboard** — press `y` on MR, pipeline, or issue detail for a quick-copy popup: MR/issue/pipeline ID, title, description, source branch (MRs), or any URL found in the item; multiple URLs open a pick list
 - 🎫 **YouTrack integration** — automatically parses issue tracker keys (like `PROJ-XXXX`) in descriptions and comments, resolving them to YouTrack URLs inside the link selection menu
 - 🎨 **Themes** — support for `"catppuccin"` (default dark theme with purple/indigo accents) and `"teams"` (green borders, dark grey panels, purple highlights)
 
@@ -161,6 +162,7 @@ Both SSH and HTTPS remotes are supported:
 | `O`       | Reopen MR (closed MRs)                                             |
 | `+` / `-` | Vote up / down                                                     |
 | `o`       | Open link selector                                                 |
+| `y`       | Yank (copy) MR ID, title, description, branch, or URLs             |
 | `p`       | Open pipeline selector                                             |
 | `Esc`     | Clear comment selection (if active) or back to list                |
 
@@ -294,6 +296,7 @@ Press `b` on the Issues list tab (for the highlighted issue) or on the Issue det
 | `R`       | Retry entire pipeline                              |
 | `c`       | Cancel pipeline                                    |
 | `o`       | Open link selector                                 |
+| `y`       | Yank (copy) pipeline ID, ref, or URL               |
 | `Esc`     | Back to list (or close trace view if open)         |
 
 **Inside trace view:**
@@ -317,6 +320,7 @@ Press `b` on the Issues list tab (for the highlighted issue) or on the Issue det
 | `O`       | Reopen Issue (closed issues)                                       |
 | `+` / `-` | Vote up / down                                                     |
 | `o`       | Open link selector                                                 |
+| `y`       | Yank (copy) issue ID, title, description, or URLs                  |
 | `Esc`     | Clear comment selection (if active) or back to list                |
 
 ## Project structure

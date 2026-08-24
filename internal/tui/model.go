@@ -174,6 +174,9 @@ type (
 	registryTagDetailLoadedMsg struct {
 		detail *gitlab.RegistryTagDetail
 	}
+	clearStatusMsg struct {
+		id int
+	}
 )
 
 // ─── Confirmation action ──────────────────────────────────────────────────────
@@ -249,6 +252,16 @@ type Model struct {
 	// Link selection
 	linkItems  []linkItem
 	linkCursor int
+
+	// Yank (copy-to-clipboard) popup in detail views
+	yankOpen      bool
+	yankURLSelect bool
+	yankItems     []linkItem
+	yankCursor    int
+
+	// Transient status message (e.g. "Copied ... to clipboard")
+	statusMsg   string
+	statusMsgID int
 
 	// Pipeline view
 	pipelines            []*gitlab.PipelineInfo
@@ -830,6 +843,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case clearStatusMsg:
+		if msg.id == m.statusMsgID {
+			m.statusMsg = ""
+		}
+		return m, nil
+
 	case jobTraceLoadedMsg:
 		m.jobTraceJob = msg.job
 		traceStr := strings.ReplaceAll(msg.trace, "\r\n", "\n")
@@ -1161,6 +1180,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key == "esc" {
 		switch m.state {
 		case stateDetail:
+			if m.yankOpen || m.yankURLSelect {
+				m.closeYank()
+				return m, nil
+			}
 			if m.tab == tabBranches && (m.branchDetailView == branchViewCommits || m.branchDetailView == branchViewCompare) && m.branchCommitDiffPanelOpen {
 				m.branchCommitDiffPanelOpen = false
 				return m, nil
@@ -1518,6 +1541,13 @@ func (m Model) handleMainKey(key string) (tea.Model, tea.Cmd) {
 // ─── Detail key handler ───────────────────────────────────────────────────────
 
 func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
+	// Yank popups swallow all keys while open
+	if m.yankOpen {
+		return m.handleYankPopupKey(key)
+	}
+	if m.yankURLSelect {
+		return m.handleYankURLSelectKey(key)
+	}
 	switch m.tab {
 	case tabMRs:
 		if m.mrDetail == nil {
@@ -1720,6 +1750,8 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 				m.prevState = m.state
 				m.state = stateLinkSelect
 			}
+		case "y":
+			return m.openYank()
 		case "p":
 			m.pipelineSelectCursor = 0
 			m.prevState = m.state
@@ -1806,6 +1838,8 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 				m.prevState = m.state
 				m.state = stateLinkSelect
 			}
+		case "y":
+			return m.openYank()
 		}
 	case tabIssues:
 		if m.issueDetail == nil {
@@ -1897,6 +1931,8 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 				m.prevState = m.state
 				m.state = stateLinkSelect
 			}
+		case "y":
+			return m.openYank()
 		case "x":
 			if m.issueDetail != nil && m.issueDetail.State == "opened" {
 				return m.promptConfirm("Close Issue", fmt.Sprintf("Close Issue #%d?", m.issueDetail.IID),
@@ -4629,7 +4665,7 @@ func (m Model) viewDetail() string {
 	}
 
 	bodyPanel := lipgloss.NewStyle().Width(m.width).Height(bodyH).MaxHeight(bodyH).Render(body)
-	return lipgloss.JoinVertical(lipgloss.Left, header, bodyPanel, footer)
+	return m.applyYankOverlays(lipgloss.JoinVertical(lipgloss.Left, header, bodyPanel, footer))
 }
 
 // viewMRDetailSplit renders left=MR detail + right=diff panel side by side.
@@ -6412,6 +6448,11 @@ func (m Model) viewFooter() string {
 }
 
 func (m Model) viewDetailFooter() string {
+	if m.statusMsg != "" {
+		hints := successStyle.Render(m.statusMsg)
+		div := lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", m.width))
+		return lipgloss.JoinVertical(lipgloss.Left, div, lipgloss.NewStyle().PaddingLeft(1).Render(hints))
+	}
 	var hints []string
 	switch m.tab {
 	case tabMRs:
@@ -6447,6 +6488,7 @@ func (m Model) viewDetailFooter() string {
 				keyHint("+", "vote up"),
 				keyHint("-", "vote down"),
 				keyHint("o", "open link"),
+				keyHint("y", "yank"),
 				keyHint("p", "pipelines"),
 				keyHint("Esc", "back"),
 				keyHint("q", "quit"),
@@ -6521,6 +6563,7 @@ func (m Model) viewDetailFooter() string {
 				keyHint("R", "retry pipeline"),
 				keyHint("c", "cancel pipeline"),
 				keyHint("o", "open link"),
+				keyHint("y", "yank"),
 				keyHint("Esc", "back"),
 				keyHint("q", "quit"),
 			}
@@ -6545,6 +6588,7 @@ func (m Model) viewDetailFooter() string {
 			keyHint("+", "vote up"),
 			keyHint("-", "vote down"),
 			keyHint("o", "open link"),
+			keyHint("y", "yank"),
 			keyHint("Esc", "back"),
 			keyHint("q", "quit"),
 		)
