@@ -1764,24 +1764,28 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 		if m.jobTraceOpen {
 			switch key {
 			case "j", "down":
-				m.jobTraceScrollOffset++
+				m.scrollJobTrace(1)
 				return m, nil
 			case "k", "up":
-				if m.jobTraceScrollOffset > 0 {
-					m.jobTraceScrollOffset--
-				}
+				m.scrollJobTrace(-1)
+				return m, nil
+			case "pgdown":
+				m.scrollJobTrace(m.jobTraceViewportHeight(m.getBodyHeight()))
+				return m, nil
+			case "pgup":
+				m.scrollJobTrace(-m.jobTraceViewportHeight(m.getBodyHeight()))
+				return m, nil
+			case "ctrl+d":
+				m.scrollJobTrace(m.jobTraceHalfPage(m.getBodyHeight()))
+				return m, nil
+			case "ctrl+u":
+				m.scrollJobTrace(-m.jobTraceHalfPage(m.getBodyHeight()))
 				return m, nil
 			case "g":
 				m.jobTraceScrollOffset = 0
 				return m, nil
 			case "G":
-				bodyH := m.getBodyHeight()
-				traceH := bodyH - 3
-				traceLines := strings.Split(m.jobTrace, "\n")
-				m.jobTraceScrollOffset = len(traceLines) - traceH
-				if m.jobTraceScrollOffset < 0 {
-					m.jobTraceScrollOffset = 0
-				}
+				m.jobTraceScrollOffset = m.jobTraceMaxScroll(m.getBodyHeight())
 				return m, nil
 			case "ctrl+g":
 				return m, m.cmdOpenTraceInEditor()
@@ -5211,6 +5215,46 @@ func (m *Model) clampMRDetailScroll() {
 	}
 }
 
+func (m Model) jobTraceViewportHeight(bodyH int) int {
+	traceH := bodyH - 3 // title, hint, separator
+	if traceH < 1 {
+		return 1
+	}
+	return traceH
+}
+
+func (m Model) jobTraceHalfPage(bodyH int) int {
+	half := m.jobTraceViewportHeight(bodyH) / 2
+	if half < 1 {
+		return 1
+	}
+	return half
+}
+
+func (m Model) jobTraceMaxScroll(bodyH int) int {
+	traceLines := strings.Split(m.jobTrace, "\n")
+	maxOffset := len(traceLines) - m.jobTraceViewportHeight(bodyH)
+	if maxOffset < 0 {
+		return 0
+	}
+	return maxOffset
+}
+
+func (m *Model) clampJobTraceScroll() {
+	maxScroll := m.jobTraceMaxScroll(m.getBodyHeight())
+	if m.jobTraceScrollOffset > maxScroll {
+		m.jobTraceScrollOffset = maxScroll
+	}
+	if m.jobTraceScrollOffset < 0 {
+		m.jobTraceScrollOffset = 0
+	}
+}
+
+func (m *Model) scrollJobTrace(delta int) {
+	m.jobTraceScrollOffset += delta
+	m.clampJobTraceScroll()
+}
+
 func (m Model) viewPipelineDetail(bodyH int) string {
 	p := m.pipelineDetail
 	if p == nil {
@@ -5309,7 +5353,7 @@ func (m Model) viewPipelineDetail(bodyH int) string {
 	if m.jobTraceOpen {
 		// Show Job Trace
 		rightLines = append(rightLines, subtitleStyle.Render(fmt.Sprintf("  Trace Log: %s", m.jobTraceJob.Name)))
-		rightLines = append(rightLines, dimStyle.Render("  (Esc/Enter=Close, j/k=Scroll, g/G=Top/Bottom, ctrl+g=Editor)"))
+		rightLines = append(rightLines, dimStyle.Render("  (Esc/Enter=Close, j/k=Scroll, PgUp/PgDn=Page, ctrl+d/u=Half, g/G=Top/Bottom, ctrl+g=Editor)"))
 		rightLines = append(rightLines, lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", rightW-2)))
 
 		traceH := bodyH - len(rightLines)
@@ -6551,6 +6595,8 @@ func (m Model) viewDetailFooter() string {
 		if m.jobTraceOpen {
 			hints = []string{
 				keyHint("j/k", "scroll trace"),
+				keyHint("PgUp/PgDn", "page"),
+				keyHint("ctrl+d/u", "half page"),
 				keyHint("Esc/Enter", "close trace"),
 				keyHint("q", "quit"),
 			}

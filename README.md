@@ -301,6 +301,8 @@ Press `b` on the Issues list tab (for the highlighted issue) or on the Issue det
 
 **Inside trace view:**
 - `j` / `k` (or down/up): Scroll trace log lines
+- `PgUp` / `PgDn`: Scroll one page
+- `Ctrl+d` / `Ctrl+u`: Scroll half page
 - `g` / `G`: Scroll trace to top / bottom
 - `Ctrl+G`: Open trace in external editor (reads `$EDITOR`, falls back to `vim`)
 - `Esc` / `Enter` / `Tab`: Close trace view
