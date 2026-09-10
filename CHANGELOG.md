@@ -1,4 +1,14 @@
 
+## [0.7.4] - 2026-09-10
+
+### Features
+
+- *(tui)* Add page and half-page scrolling to pipeline job trace view ([e5dd203](https://github.com/nospor/gitlab-tui/commit/e5dd20394c773bd7558eb612143d9388fe83add7))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.7.3 [skip ci] ([69c3fff](https://github.com/nospor/gitlab-tui/commit/69c3fff63e9f6c567450dd796b3fd2fb789dafaf))
+
 ## [0.7.3] - 2026-08-24
 
 ### Features
