@@ -2,7 +2,7 @@
 
 A terminal UI (TUI) application for managing GitLab projects — Merge Requests, Pipelines, and Issues — from your terminal.
 
-Built with [BubbleTea](https://github.com/charmbracelet/bubbletea) and the official [GitLab API client](https://gitlab.com/gitlab-org/api/client-go).
+Built with [BubbleTea](https://github.com/charmbracelet/bubbletea) and the official [GitLab API client](https://gitlab.com/gitlab-org/api/client-go). A GitHub counterpart lives in [github-tui](https://github.com/nospor/github-tui).
 
 ## Features
 
@@ -338,6 +338,10 @@ Press `b` on the Issues list tab (for the highlighted issue) or on the Issue det
 │       └── styles.go          # Lipgloss styles + colors
 └── Makefile
 ```
+
+## See also
+
+- [github-tui](https://github.com/nospor/github-tui) — sibling TUI for GitHub: pull requests, issues, Actions, branches, and tags. Same Bubble Tea layout, keys, config shape, and YouTrack links.
 
 ## License
 
