@@ -1,4 +1,21 @@
 
+## [0.7.5] - 2026-11-02
+
+### Features
+
+- *(config)* Load server tokens from a .env file beside config.json ([68a9e65](https://github.com/nospor/gitlab-tui/commit/68a9e6533f350b15ffd76bacb7ef5ee319971c02))
+
+            Let a server token be $NAME or ${NAME} so the secret can stay out of a
+            committed config.json.
+
+### Documentation
+
+- Point readers at github-tui as the sibling GitHub TUI ([32cb8ab](https://github.com/nospor/gitlab-tui/commit/32cb8abbd90b60d73ae32e7a8064a9eadcf8cdca))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.7.4 [skip ci] ([8f227bd](https://github.com/nospor/gitlab-tui/commit/8f227bd2a19d686f136d4eae0300a6a1a1741f7c))
+
 ## [0.7.4] - 2026-09-10
 
 ### Features
