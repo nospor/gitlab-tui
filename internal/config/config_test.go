@@ -1,6 +1,9 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -263,6 +266,139 @@ func TestIsYouTrackURL(t *testing.T) {
 				t.Errorf("IsYouTrackURL(%q) = %v, want %v", tt.url, got, tt.expected)
 			}
 		})
+	}
+}
+
+func TestEnvRef(t *testing.T) {
+	tests := []struct {
+		token string
+		name  string
+		ok    bool
+	}{
+		{token: "$GITLAB_TOKEN", name: "GITLAB_TOKEN", ok: true},
+		{token: "${GITLAB_TOKEN}", name: "GITLAB_TOKEN", ok: true},
+		{token: "  $GITLAB_TOKEN  ", name: "GITLAB_TOKEN", ok: true},
+		{token: "glpat-abc", ok: false},
+		{token: "$", ok: false},
+		{token: "${}", ok: false},
+		{token: "$1TOKEN", ok: false},
+		{token: "prefix-$GITLAB_TOKEN", ok: false},
+	}
+	for _, tt := range tests {
+		name, ok := envRef(tt.token)
+		if ok != tt.ok || name != tt.name {
+			t.Errorf("envRef(%q) = %q, %v; want %q, %v", tt.token, name, ok, tt.name, tt.ok)
+		}
+	}
+}
+
+func TestLoadDotEnv(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".env")
+	contents := strings.Join([]string{
+		"# comment",
+		"",
+		"GITLAB_COM_TOKEN=glpat-from-file",
+		`COMPANY_TOKEN="glpat-quoted"`,
+		"export SPACED_TOKEN = glpat-spaced",
+		"not a pair",
+		"EMPTY=",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	env, err := loadDotEnv(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env["GITLAB_COM_TOKEN"] != "glpat-from-file" {
+		t.Errorf("GITLAB_COM_TOKEN = %q", env["GITLAB_COM_TOKEN"])
+	}
+	if env["COMPANY_TOKEN"] != "glpat-quoted" {
+		t.Errorf("COMPANY_TOKEN = %q", env["COMPANY_TOKEN"])
+	}
+	if env["SPACED_TOKEN"] != "glpat-spaced" {
+		t.Errorf("SPACED_TOKEN = %q", env["SPACED_TOKEN"])
+	}
+	if _, ok := env["EMPTY"]; !ok || env["EMPTY"] != "" {
+		t.Errorf("EMPTY = %q, present %v", env["EMPTY"], ok)
+	}
+}
+
+func TestResolveServerTokens(t *testing.T) {
+	servers := []Server{
+		{Name: "file", Token: "$FROM_FILE"},
+		{Name: "env", Token: "${FROM_ENV}"},
+		{Name: "literal", Token: "glpat-literal"},
+	}
+	err := resolveServerTokens(servers, map[string]string{"FROM_FILE": "file-secret"}, "/cfg/.env", func(name string) string {
+		if name == "FROM_ENV" {
+			return "env-secret"
+		}
+		if name == "FROM_FILE" {
+			return "should-not-win"
+		}
+		return ""
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if servers[0].Token != "file-secret" {
+		t.Errorf("file token = %q", servers[0].Token)
+	}
+	if servers[1].Token != "env-secret" {
+		t.Errorf("env token = %q", servers[1].Token)
+	}
+	if servers[2].Token != "glpat-literal" {
+		t.Errorf("literal token = %q", servers[2].Token)
+	}
+
+	missing := []Server{{Name: "gitlab.com", Token: "$MISSING"}}
+	err = resolveServerTokens(missing, nil, "/cfg/.env", func(string) string { return "" })
+	if err == nil || !strings.Contains(err.Error(), "$MISSING") || !strings.Contains(err.Error(), "gitlab.com") {
+		t.Fatalf("missing token error = %v", err)
+	}
+}
+
+func TestLoadResolvesTokenWithoutPersisting(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("GITLAB_COM_TOKEN", "from-process")
+
+	dir := filepath.Join(home, ".config", "gitlab-tui")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	raw := []byte("{\n  \"servers\": [\n    {\n      \"name\": \"gitlab.com\",\n      \"url\": \"https://gitlab.com\",\n      \"token\": \"$GITLAB_COM_TOKEN\"\n    }\n  ]\n}\n")
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("GITLAB_COM_TOKEN=glpat-from-file\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Servers[0].Token != "glpat-from-file" {
+		t.Errorf("loaded token = %q", cfg.Servers[0].Token)
+	}
+	if cfg.BrowserCommand != defaultBrowserCommand || cfg.Theme != "catppuccin" {
+		t.Errorf("defaults not applied: browser %q theme %q", cfg.BrowserCommand, cfg.Theme)
+	}
+
+	saved, err := os.ReadFile(filepath.Join(dir, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(saved)
+	if !strings.Contains(text, `"token": "$GITLAB_COM_TOKEN"`) {
+		t.Errorf("config.json lost the token reference:\n%s", text)
+	}
+	if strings.Contains(text, "glpat-from-file") || strings.Contains(text, "from-process") {
+		t.Errorf("config.json contains a resolved token:\n%s", text)
 	}
 }
 

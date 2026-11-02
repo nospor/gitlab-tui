@@ -108,6 +108,23 @@ Edit it to add your servers:
 | `youtrack_command` | —              | Command to open YouTrack URLs specifically (e.g. [`yt-tui`](https://github.com/nospor/yt-tui)). When set, any URL belonging to a configured YouTrack server is opened via this command instead of `browser_command`. |
 | `theme`            | `"catppuccin"` | TUI theme. Supported values: `"catppuccin"` (default) or `"teams"` (green borders, dark grey panels, purple highlights).                                                                                             |
 
+A server `token` may be a literal personal access token, or a reference to a variable in `~/.config/gitlab-tui/.env` (same folder as `config.json`). Use `$NAME` or `${NAME}`:
+
+```json
+{
+  "name": "gitlab.com",
+  "url": "https://gitlab.com",
+  "token": "$GITLAB_COM_TOKEN"
+}
+```
+
+```
+# ~/.config/gitlab-tui/.env
+GITLAB_COM_TOKEN=glpat-xxxxxxxxxxxxxxxxxxxx
+```
+
+The file is read when the config loads. A name set there overrides the same variable in the process environment. If it is missing from the file, the process environment is used. The resolved value stays in memory and is not written back into `config.json`.
+
 You need a **Personal Access Token** with at least `api` scope. Create one at:
 `https://gitlab.com/-/user_settings/personal_access_tokens`
 

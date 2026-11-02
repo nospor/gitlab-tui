@@ -78,7 +78,123 @@ func Load() (*Config, error) {
 		}
 	}
 
+	// Expand $VAR tokens after saving defaults so secrets are not written back.
+	if err := resolveTokens(&cfg); err != nil {
+		return nil, err
+	}
+
 	return &cfg, nil
+}
+
+// dotenvPath is the env file next to config.json.
+func dotenvPath() string {
+	return filepath.Join(filepath.Dir(ConfigPath()), ".env")
+}
+
+// envRef reports whether token is a whole-value reference ($NAME or ${NAME}).
+func envRef(token string) (string, bool) {
+	token = strings.TrimSpace(token)
+	if len(token) < 2 || token[0] != '$' {
+		return "", false
+	}
+	name := token[1:]
+	if strings.HasPrefix(name, "{") && strings.HasSuffix(name, "}") {
+		name = name[1 : len(name)-1]
+	}
+	if !validEnvName(name) {
+		return "", false
+	}
+	return name, true
+}
+
+func validEnvName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i, r := range name {
+		switch {
+		case r == '_':
+		case r >= 'A' && r <= 'Z':
+		case r >= 'a' && r <= 'z':
+		case i > 0 && r >= '0' && r <= '9':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// loadDotEnv reads a simple KEY=VALUE file. Missing file is reported as os.ErrNotExist.
+func loadDotEnv(path string) (map[string]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	env := make(map[string]string)
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(strings.TrimRight(line, "\r"))
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "export ") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+		}
+		key, val, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		if !validEnvName(key) {
+			continue
+		}
+		val = strings.TrimSpace(val)
+		if len(val) >= 2 {
+			if (val[0] == '"' && val[len(val)-1] == '"') || (val[0] == '\'' && val[len(val)-1] == '\'') {
+				val = val[1 : len(val)-1]
+			}
+		}
+		env[key] = val
+	}
+	return env, nil
+}
+
+// resolveTokens replaces $VAR server tokens from the .env file beside the config,
+// then from the process environment. A value present in the file wins.
+// Literal tokens are left unchanged.
+func resolveTokens(cfg *Config) error {
+	path := dotenvPath()
+	fileEnv, err := loadDotEnv(path)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("reading %s: %w", path, err)
+	}
+	return resolveServerTokens(cfg.Servers, fileEnv, path, os.Getenv)
+}
+
+func resolveServerTokens(servers []Server, fileEnv map[string]string, envPath string, lookup func(string) string) error {
+	for i := range servers {
+		name, ok := envRef(servers[i].Token)
+		if !ok {
+			continue
+		}
+		if fileEnv != nil {
+			if val, found := fileEnv[name]; found {
+				if val == "" {
+					return fmt.Errorf("server %q: token $%s is empty in %s", servers[i].Name, name, envPath)
+				}
+				servers[i].Token = val
+				continue
+			}
+		}
+		val := ""
+		if lookup != nil {
+			val = lookup(name)
+		}
+		if val == "" {
+			return fmt.Errorf("server %q: token $%s is not set in %s or the environment", servers[i].Name, name, envPath)
+		}
+		servers[i].Token = val
+	}
+	return nil
 }
 
 // Save writes config to disk.
